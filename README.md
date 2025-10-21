@@ -11,13 +11,14 @@
 3. python  kafka iceberg sink  使用iceberg，对应src中main.py, 依赖对应pom.xml
 
 ### 依赖编译方式
+
 ```
 # 执行如下命令编译即可，jdk 11,  maven 3.9.x. 
+git clone https://github.com/yhyyz/msf-pyflink-job.git
+cd msf-pyflink-job
 mvn clean package 
-
-# 编译好的zip
-
 ```
+
 编译之后在target目录下会有zip和依赖jar。在MSF上提交作业只需要zip即可同时需要配置如下参数
 
 | Group ID                              | Key       | Mandatory | Value                          | Notes                                                                     |
