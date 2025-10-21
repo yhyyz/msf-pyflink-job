@@ -64,10 +64,23 @@ class FlinkManager:
                     {
                         "Effect": "Allow",
                         "Action": [
-                            "s3:GetObject",
-                            "s3:GetObjectVersion"
+                            "glue:*",
                         ],
-                        "Resource": "arn:aws:s3:::*/*"
+                        "Resource": "*"
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "s3:*",
+                        ],
+                        "Resource": "*"
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "ec2:*",
+                        ],
+                        "Resource": "*"
                     },
                     {
                         "Effect": "Allow",
