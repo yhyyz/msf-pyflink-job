@@ -138,7 +138,7 @@ class FlinkManager:
             print(f"Error uploading to S3: {e}")
             return None
     
-    def create_application(self, app_name, s3_bucket_arn, s3_object_key, python_main_file='pyflink_sql_job.py',dep_jar='lib/pyflink-dependencies.jar'):
+    def create_application(self, app_name, s3_bucket_arn, s3_object_key, subnet_id, sg_id,python_main_file='main.py',dep_jar='lib/pyflink-dependencies.jar'):
         """Create Kinesis Analytics application for Python/PyFlink"""
         try:
             # Ensure service role exists
@@ -149,7 +149,7 @@ class FlinkManager:
             
             response = self.client.create_application(
                 ApplicationName=app_name,
-                ApplicationDescription='PyFlink SQL job managed by boto3',
+                ApplicationDescription='pyflink-sql',
                 RuntimeEnvironment='FLINK-1_20',
                 ServiceExecutionRole=service_role_arn,
                 ApplicationConfiguration={
@@ -173,6 +173,16 @@ class FlinkManager:
                             }
                         ]
                     },
+                    'VpcConfigurations': [
+                        {
+                            'SubnetIds': [
+                                subnet_id
+                            ],
+                            'SecurityGroupIds': [
+                                sg_id
+                            ]
+                        },
+                    ],
                     'FlinkApplicationConfiguration': {
                         'CheckpointConfiguration': {
                             'ConfigurationType': 'DEFAULT'
@@ -303,87 +313,3 @@ class FlinkManager:
         except ClientError as e:
             print(f"Error deleting application: {e}")
             return None
-
-def main():
-    """Example usage of FlinkManager"""
-    # Configuration
-    APP_NAME = 'pyflink-sql-demo'
-    S3_BUCKET = 'pcd-01'
-    S3_KEY = 'flink-jobs/pyflink-job.zip'
-    S3_BUCKET_ARN = f'arn:aws:s3:::{S3_BUCKET}'
-    
-    # Initialize manager
-    manager = FlinkManager()
-    
-    # Create and upload job
-    print("Creating Python application zip file...")
-    zip_file = manager.create_python_application_zip('pyflink_sql_job.py', 'requirements.txt')
-    
-    print("Uploading to S3...")
-    s3_url = manager.upload_to_s3(zip_file, S3_BUCKET, S3_KEY)
-    if not s3_url:
-        return
-    
-    # Create application (IAM role will be created automatically if needed)
-    print("Creating Flink application...")
-    create_response = manager.create_application(APP_NAME, S3_BUCKET_ARN, S3_KEY)
-    if not create_response:
-        return
-    
-    # Wait for application to be ready
-    print("Waiting for application to be ready...")
-    max_wait = 300
-    wait_time = 0
-    while wait_time < max_wait:
-        status = manager.get_application_status(APP_NAME)
-        if status == 'READY':
-            break
-        elif status in ['DELETING', 'STOPPING']:
-            print("Application is in transitional state, waiting...")
-            time.sleep(10)
-            wait_time += 10
-        else:
-            time.sleep(5)
-            wait_time += 5
-    
-    if wait_time >= max_wait:
-        print("Timeout waiting for application to be ready")
-        return
-    
-    # Start application
-    print("Starting application...")
-    start_response = manager.start_application(APP_NAME)
-    if not start_response:
-        return
-    
-    # Monitor status
-    print("Monitoring application status...")
-    max_wait = 300
-    wait_time = 0
-    while wait_time < max_wait:
-        status = manager.get_application_status(APP_NAME)
-        if status == 'RUNNING':
-            print("✅ Application is running successfully!")
-            break
-        time.sleep(10)
-        wait_time += 10
-    
-    if wait_time >= max_wait:
-        print("Timeout waiting for application to start running")
-        return
-    
-    # Clean up zip file
-    os.remove(zip_file)
-    print(f"Cleaned up {zip_file}")
-    
-    print("\n=== Application Management Complete ===")
-    print(f"Application Name: {APP_NAME}")
-    print(f"S3 Location: {s3_url}")
-    print(f"Status: RUNNING")
-    print("\nManagement commands:")
-    print(f"  Stop: manager.stop_application('{APP_NAME}')")
-    print(f"  Delete: manager.delete_application('{APP_NAME}')")
-    print(f"  Status: manager.get_application_status('{APP_NAME}')")
-
-if __name__ == '__main__':
-    main()
