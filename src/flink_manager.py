@@ -115,6 +115,15 @@ class FlinkManager:
         with zipfile.ZipFile(zip_name, 'w') as zipf:
             # Add the main Python file
             zipf.write(job_file_path, os.path.basename(job_file_path))
+                # Add lib directory and all its contents
+            job_dir = os.path.dirname(job_file_path)
+            lib_dir = os.path.join(job_dir, 'lib')
+            for root, dirs, files in os.walk(lib_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Keep lib/ prefix in zip
+                    arcname = os.path.relpath(file_path, job_dir)
+                    zipf.write(file_path, arcname)
             # Add requirements.txt
             zipf.write(requirements_file_path, 'requirements.txt')
         return zip_name
@@ -129,7 +138,7 @@ class FlinkManager:
             print(f"Error uploading to S3: {e}")
             return None
     
-    def create_application(self, app_name, s3_bucket_arn, s3_object_key, python_main_file='pyflink_sql_job.py'):
+    def create_application(self, app_name, s3_bucket_arn, s3_object_key, python_main_file='pyflink_sql_job.py',dep_jar='lib/pyflink-dependencies.jar'):
         """Create Kinesis Analytics application for Python/PyFlink"""
         try:
             # Ensure service role exists
@@ -158,7 +167,8 @@ class FlinkManager:
                             {
                                 'PropertyGroupId': 'kinesis.analytics.flink.run.options',
                                 'PropertyMap': {
-                                    'python': python_main_file
+                                    'python': python_main_file,
+                                    'jarfile': dep_jar
                                 }
                             }
                         ]

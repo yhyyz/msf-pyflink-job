@@ -15,7 +15,7 @@ def quick_start():
     """快速部署一个PyFlink作业"""
     
     # 配置 - 请根据您的环境修改
-    APP_NAME = 'my-pyflink-app'
+    APP_NAME = 'my-pyflink-app-02'
     S3_BUCKET = 'pcd-01'  # 请修改为您的S3存储桶
     S3_KEY = 'flink-jobs/my-app.zip'
     
