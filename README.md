@@ -62,6 +62,15 @@ python quick_start.py \
 --local_dep_jar_path: 本地依赖JAR路
 ```
 
+```
+# kafka 发送几个数据测试
+export bs="b-1.xxx.ap-southeast-1.amazonaws.com:9092"
+# ./bin/kafka-topics.sh --create --topic test --partitions 16 --replication-factor 3 --bootstrap-server $bs
+./bin/kafka-console-producer.sh --topic test --bootstrap-server $bs
+
+{"id":1,"name":"aws"}
+```
+
 ### 注意事项
 #### 代码权限相关
 1. 如果python代码有错误，提交作业会失败，在日志中可以看到 CodeError.InvalidApplicationCode 类似错误
