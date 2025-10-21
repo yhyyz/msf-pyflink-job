@@ -1,5 +1,9 @@
 # AWS Managed Flink PyFlink 作业例子
 
+### 版本
+* MSF Flink 1.20
+* Iceberg 1.9.0
+
 ### 可以使用功能
 
 1. pyflink simple test 用户简单测试,对应src中main-simple.py
@@ -21,6 +25,41 @@ mvn clean package
 | `kinesis.analytics.flink.run.options` | `python`  | Y         | `main.py`                      | The Python script containing the main() method to start the job.          |
 | `kinesis.analytics.flink.run.options` | `jarfile` | Y         | `lib/pyflink-dependencies.jar` | Location (inside the zip) of the fat-jar containing all jar dependencies. |
 
+
+### 快速开始
+为了方便使用添加了 quick_start.py ，可以执行这个python脚本，快速创建一个kafka sink iceberg的作业
+
+```
+# 注意修改src/main.py 中如下相关参数为你的值
+iceberg_catalog_name = "iceberg_catalog"
+iceberg_database_name = "default_db"
+iceberg_table_name = "msk_stats"
+iceberg_warehouse_path = "s3://xxx/tmp/msf-test/"
+kafka_server="b-1.xxxx.c3.kafka.ap-southeast-1.amazonaws.com:9092"
+kafka_topic="test"
+
+# 编译依赖
+mvn clean package 
+
+# 例子
+python quick_start.py \
+  --app_name flink-msk-iceberg-sink-demo \
+  --s3_bucket pcd-01 \
+  --s3_key flink-jobs/flink-msk-iceberg-sink-demo.zip \
+  --subnet_id subnet-0f79e4471cfa74ced \
+  --sg_id sg-f83dcdb3 \
+  --aws_region ap-southeast-1 \
+  --local_dep_jar_path target/managed-flink-pyfink-msk-iceberg-1.0.0.zip
+  
+# 参数说明
+--app_name: 应用程序名称
+--s3_bucket: S3存储桶名称  
+--s3_key: S3对象键
+--subnet_id: 子网ID
+--sg_id: 安全组ID
+--aws_region: AWS区域
+--local_dep_jar_path: 本地依赖JAR路
+```
 
 ### 注意事项
 #### 代码权限相关
