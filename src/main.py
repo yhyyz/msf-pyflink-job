@@ -15,6 +15,9 @@ def main():
     iceberg_database_name = "default_db"
     iceberg_table_name = "msk_stats"
     iceberg_warehouse_path = "s3://pcd-01/tmp/msf-test/"
+    
+    kafka_server="b-1.standardxlarge.f9l2in.c3.kafka.ap-southeast-1.amazonaws.com:9092"
+    kafka_topic="test"
 
     # 创建表环境
     env_settings = EnvironmentSettings.new_instance().in_streaming_mode().build()
@@ -24,15 +27,15 @@ def main():
     table_env.get_config().get_configuration().set_string("execution.checkpointing.interval", "60s")
 
     # 创建Kafka源表SQL
-    create_source_table = """
+    create_source_table = f"""
         CREATE TABLE msk_source (
             id BIGINT,
             username STRING,
             proc_time AS PROCTIME()
         ) WITH (
             'connector' = 'kafka',
-            'topic' = 'test',
-            'properties.bootstrap.servers' = 'b-1.standardxlarge.f9l2in.c3.kafka.ap-southeast-1.amazonaws.com:9092',
+            'topic' = '{kafka_topic}',
+            'properties.bootstrap.servers' = '{kafka_server}',
             'format' = 'json',
             'json.fail-on-missing-field' = 'false',
             'json.ignore-parse-errors' = 'true',
