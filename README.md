@@ -98,7 +98,10 @@ python main-local.py
 
 # flink web ui 端口设定的是本机的 8081 直接访问即可
 # flink 日志 .venv/lib/python3.11/site-packages/pyflink/log/
+<<<<<<< HEAD
 
+=======
+>>>>>>> 856899dd297fd7a33db4dfebf7a141844e0361d0
 ```
 
 ### 作业提交相关截图
