@@ -93,9 +93,11 @@ uv pip install apache-flink==1.20.0
 uv pip install setuptools
 
 # 执行
+export IS_LOCAL=true
 python main-local.py
 
 # flink web ui 端口设定的是本机的 8081 直接访问即可
+# flink 日志 .venv/lib/python3.11/site-packages/pyflink/log/
 
 ```
 

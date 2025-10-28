@@ -15,7 +15,6 @@ def main():
     iceberg_database_name = "default_db"
     iceberg_table_name = "msk_stats"
     iceberg_warehouse_path = "s3://pcd-01/tmp/msf-test/"
-    
     kafka_server="b-1.standardxlarge.f9l2in.c3.kafka.ap-southeast-1.amazonaws.com:9092"
     kafka_topic="test"
 
