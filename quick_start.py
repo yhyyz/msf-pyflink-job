@@ -1,84 +1,355 @@
 #!/usr/bin/env python3
-"""
-快速开始脚本 - 最简单的PyFlink作业部署示例
-"""
+from __future__ import annotations
 
-import sys
-import os
 import argparse
+import logging
+import os
+import sys
 
-# Add src directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '.', 'src'))
+import boto3
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".", "src"))
 
 from flink_manager import FlinkManager
 
-def quick_start(args):
-    
-    # 配置 - 从命令行参数获取
-    APP_NAME = args.app_name
-    S3_BUCKET = args.s3_bucket
-    S3_KEY = args.s3_key
-    SUBNET_ID = args.subnet_id
-    SG_ID = args.sg_id
-    AWS_REGION = args.aws_region
-    LOCAL_DEP_JAR_PATH = args.local_dep_jar_path
-    
-    src_dir = os.path.join(os.path.dirname(__file__), 'src')
-    job_file = os.path.join(src_dir, 'main.py')
-    current_file_path = os.path.dirname(__file__)
-    
-    LOCAL_ZIP_FILE = os.path.join(os.path.dirname(__file__), LOCAL_DEP_JAR_PATH)
-    
-    print(f"🚀 快速部署PyFlink作业: {APP_NAME}")
-    #requirements_file = os.path.join(src_dir, 'requirements.txt')
-    print(f"local zip file path: {LOCAL_ZIP_FILE}")
-    
-    # 初始化管理器
-    manager = FlinkManager(region=AWS_REGION)
-    
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+JOB_PROPERTY_KEYS: dict[str, list[str]] = {
+    "main-kafka-iceberg.py": [
+        "kafka.bootstrap",
+        "kafka.topic",
+        "iceberg.warehouse",
+        "iceberg.database",
+        "iceberg.table",
+        "aws.region",
+    ],
+    "main-kafka-s3.py": [
+        "kafka.bootstrap",
+        "kafka.topic",
+        "s3.output.path",
+        "aws.region",
+    ],
+    "main-mysql.py": [
+        "kafka.bootstrap",
+        "kafka.topic",
+        "mysql.host",
+        "mysql.port",
+        "mysql.database",
+        "mysql.table",
+        "mysql.user",
+        "mysql.password",
+    ],
+    "main-debezium-mysql.py": [
+        "kafka.bootstrap",
+        "kafka.topic",
+        "mysql.host",
+        "mysql.port",
+        "mysql.database",
+        "mysql.table",
+        "mysql.user",
+        "mysql.password",
+    ],
+    "main-debezium-iceberg.py": [
+        "kafka.bootstrap",
+        "kafka.topic",
+        "iceberg.warehouse",
+        "iceberg.database",
+        "iceberg.table",
+        "aws.region",
+    ],
+    "main-simple.py": [],
+}
+
+
+def get_msk_cluster_info(cluster_name: str, region: str) -> dict[str, str] | None:
+    """Get MSK cluster info: bootstrap servers, subnet, security group"""
+    kafka_client = boto3.client("kafka", region_name=region)
+    ec2_client = boto3.client("ec2", region_name=region)
+
     try:
-        # 1. 创建应用程序包, 直接提供LOCAL_ZIP_FILE,不需要创建zip，如果要自己创建zip,将依赖放到src/lib/目录下
-        #print("📦 创建应用程序包...")
-        #zip_file = manager.create_python_application_zip(job_file, requirements_file)
-        zip_file = LOCAL_ZIP_FILE
-        # 2. 上传到S3
-        print("☁️ 上传到S3...")
-        s3_bucket_arn = f'arn:aws:s3:::{S3_BUCKET}'
-        s3_url = manager.upload_to_s3(zip_file, S3_BUCKET, S3_KEY)
-        
-        # 3. 创建并启动应用程序
-        print("🔧 创建Flink应用程序...")
-        manager.create_application(APP_NAME, s3_bucket_arn, S3_KEY, SUBNET_ID,SG_ID)
-        
-        print("🚀 启动应用程序...")
-        manager.start_application(APP_NAME)
-        
-        print("✅ 部署完成!")
-        print(f"应用程序名称: {APP_NAME}")
-        
+        response = kafka_client.list_clusters_v2()
+        cluster_arn = None
+        for cluster in response.get("ClusterInfoList", []):
+            if cluster.get("ClusterName") == cluster_name:
+                cluster_arn = cluster.get("ClusterArn")
+                break
+
+        if not cluster_arn:
+            logger.warning(f"MSK cluster '{cluster_name}' not found")
+            return None
+
+        cluster_info = kafka_client.describe_cluster_v2(ClusterArn=cluster_arn)
+        provisioned = cluster_info["ClusterInfo"].get("Provisioned", {})
+
+        client_subnets = provisioned.get("BrokerNodeGroupInfo", {}).get(
+            "ClientSubnets", []
+        )
+        security_groups = provisioned.get("BrokerNodeGroupInfo", {}).get(
+            "SecurityGroups", []
+        )
+
+        bootstrap_response = kafka_client.get_bootstrap_brokers(ClusterArn=cluster_arn)
+        bootstrap_servers = (
+            bootstrap_response.get("BootstrapBrokerString")
+            or bootstrap_response.get("BootstrapBrokerStringSaslIam")
+            or bootstrap_response.get("BootstrapBrokerStringTls")
+        )
+
+        subnet_id = client_subnets[0] if client_subnets else None
+        sg_id = security_groups[0] if security_groups else None
+
+        if subnet_id:
+            subnet_info = ec2_client.describe_subnets(SubnetIds=[subnet_id])
+            subnets = subnet_info.get("Subnets", [])
+            if subnets:
+                map_public = subnets[0].get("MapPublicIpOnLaunch", False)
+                if map_public:
+                    for sid in client_subnets[1:]:
+                        subnet_check = ec2_client.describe_subnets(SubnetIds=[sid])
+                        if not subnet_check["Subnets"][0].get(
+                            "MapPublicIpOnLaunch", False
+                        ):
+                            subnet_id = sid
+                            break
+
+        logger.info(f"MSK cluster '{cluster_name}' found")
+        logger.info(f"  Bootstrap: {bootstrap_servers}")
+        logger.info(f"  Subnet: {subnet_id}")
+        logger.info(f"  Security Group: {sg_id}")
+
+        return {
+            "bootstrap_servers": bootstrap_servers or "",
+            "subnet_id": subnet_id or "",
+            "sg_id": sg_id or "",
+        }
+
     except Exception as e:
-        print(f"❌ 部署失败: {e}")
+        logger.error(f"Failed to get MSK cluster info: {e}")
+        return None
+
+
+def build_app_properties(args) -> dict[str, str]:
+    all_properties = {
+        "kafka.bootstrap": args.kafka_bootstrap,
+        "kafka.topic": args.kafka_topic,
+        "iceberg.warehouse": args.iceberg_warehouse,
+        "iceberg.database": args.iceberg_database,
+        "iceberg.table": args.iceberg_table,
+        "s3.output.path": args.s3_output_path,
+        "mysql.host": args.mysql_host,
+        "mysql.port": args.mysql_port,
+        "mysql.database": args.mysql_database,
+        "mysql.table": args.mysql_table,
+        "mysql.user": args.mysql_user,
+        "mysql.password": args.mysql_password,
+        "aws.region": args.aws_region,
+    }
+
+    required_keys = JOB_PROPERTY_KEYS.get(args.python_main, list(all_properties.keys()))
+    return {k: v for k, v in all_properties.items() if k in required_keys and v}
+
+
+def quick_start(args):
+    app_name = args.app_name
+    s3_bucket = args.s3_bucket
+    s3_key = args.s3_key
+    aws_region = args.aws_region
+    local_zip_path = args.local_dep_jar_path
+    python_main = args.python_main
+
+    subnet_id = args.subnet_id
+    sg_id = args.sg_id
+    kafka_bootstrap = args.kafka_bootstrap
+
+    if args.msk_cluster_name:
+        msk_info = get_msk_cluster_info(args.msk_cluster_name, aws_region)
+        if msk_info:
+            if not args.subnet_id:
+                subnet_id = msk_info["subnet_id"]
+            if not args.sg_id:
+                sg_id = msk_info["sg_id"]
+            if not args.kafka_bootstrap:
+                kafka_bootstrap = msk_info["bootstrap_servers"]
+        else:
+            logger.warning("Using provided subnet_id, sg_id, kafka_bootstrap instead")
+
+    if not subnet_id or not sg_id:
+        logger.error(
+            "subnet_id and sg_id are required. Provide them or use --msk_cluster_name"
+        )
         return False
-    
+
+    args.kafka_bootstrap = kafka_bootstrap
+
+    local_zip_file = os.path.join(os.path.dirname(__file__), local_zip_path)
+
+    logger.info(f"Deploying PyFlink job: {app_name}")
+    logger.info(f"Python main: {python_main}")
+    logger.info(f"Subnet: {subnet_id}, SG: {sg_id}")
+    logger.info(f"Kafka bootstrap: {kafka_bootstrap}")
+    logger.info(f"Local zip: {local_zip_file}")
+
+    manager = FlinkManager(region=aws_region, s3_bucket=s3_bucket)
+
+    try:
+        logger.info("Uploading to S3...")
+        s3_bucket_arn = f"arn:aws:s3:::{s3_bucket}"
+        manager.upload_to_s3(local_zip_file, s3_bucket, s3_key)
+
+        app_properties = build_app_properties(args)
+        logger.info(f"Application properties: {list(app_properties.keys())}")
+
+        logger.info("Creating Flink application...")
+        manager.create_application(
+            app_name,
+            s3_bucket_arn,
+            s3_key,
+            subnet_id,
+            sg_id,
+            python_main_file=python_main,
+            app_properties=app_properties,
+        )
+
+        logger.info("Starting application...")
+        manager.start_application(app_name)
+
+        logger.info(f"Deployment complete: {app_name}")
+
+    except Exception as e:
+        logger.error(f"Deployment failed: {e}")
+        return False
+
     return True
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='快速部署PyFlink作业到AWS Managed Service for Apache Flink')
-    
-    parser.add_argument('--app_name', default='flink-msk-iceberg-sink-demo', 
-                       help='应用程序名称 (默认: flink-msk-iceberg-sink-demo)')
-    parser.add_argument('--s3_bucket', default='pcd-01', 
-                       help='S3存储桶名称 (默认: pcd-01)')
-    parser.add_argument('--s3_key', default='flink-jobs/flink-msk-iceberg-sink-demo.zip', 
-                       help='S3对象键 (默认: flink-jobs/flink-msk-iceberg-sink-demo.zip)')
-    parser.add_argument('--subnet_id', default='subnet-0f79e4471cfa74ced', 
-                       help='子网ID (默认: subnet-0f79e4471cfa74ced)')
-    parser.add_argument('--sg_id', default='sg-f83dcdb3', 
-                       help='安全组ID (默认: sg-f83dcdb3)')
-    parser.add_argument('--aws_region', default='ap-southeast-1', 
-                       help='AWS区域 (默认: ap-southeast-1)')
-    parser.add_argument('--local_dep_jar_path', default='target/managed-flink-pyfink-msk-iceberg-1.0.0.zip', 
-                       help='本地依赖JAR路径 (默认: target/managed-flink-pyfink-msk-iceberg-1.0.0.zip)')
-    
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Deploy PyFlink job to AWS Managed Service for Apache Flink",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--app_name",
+        default="flink-msk-iceberg-sink-demo",
+        help="Application name",
+    )
+    parser.add_argument(
+        "--s3_bucket",
+        default="pcd-ue1-01",
+        help="S3 bucket for code",
+    )
+    parser.add_argument(
+        "--s3_key",
+        default="flink-jobs/flink-msk-iceberg-sink-demo.zip",
+        help="S3 object key",
+    )
+    parser.add_argument(
+        "--subnet_id",
+        default="",
+        help="VPC subnet ID (auto-detect from MSK if not provided)",
+    )
+    parser.add_argument(
+        "--sg_id",
+        default="",
+        help="Security group ID (auto-detect from MSK if not provided)",
+    )
+    parser.add_argument(
+        "--msk_cluster_name",
+        default="msk-log-stream",
+        help="MSK cluster name (used to auto-detect subnet, sg, bootstrap)",
+    )
+    parser.add_argument(
+        "--aws_region",
+        default="us-east-1",
+        help="AWS region",
+    )
+    parser.add_argument(
+        "--local_dep_jar_path",
+        default="target/msf-pyflink-iceberg-1.0.0.zip",
+        help="Local zip file path",
+    )
+    parser.add_argument(
+        "--python_main",
+        default="main-kafka-iceberg.py",
+        help="Python entry file",
+    )
+
+    kafka_group = parser.add_argument_group("Kafka")
+    kafka_group.add_argument(
+        "--kafka_bootstrap",
+        default="",
+        help="Kafka bootstrap servers (auto-detect from MSK if not provided)",
+    )
+    kafka_group.add_argument(
+        "--kafka_topic",
+        default="test",
+        help="Kafka topic",
+    )
+
+    iceberg_group = parser.add_argument_group("Iceberg")
+    iceberg_group.add_argument(
+        "--iceberg_warehouse",
+        default="s3://pcd-ue1-01/iceberg-warehouse/",
+        help="Iceberg warehouse path",
+    )
+    iceberg_group.add_argument(
+        "--iceberg_database",
+        default="test_iceberg_db",
+        help="Iceberg database name",
+    )
+    iceberg_group.add_argument(
+        "--iceberg_table",
+        default="kafka_agg_sink",
+        help="Iceberg table name",
+    )
+
+    s3_group = parser.add_argument_group("S3 Sink")
+    s3_group.add_argument(
+        "--s3_output_path",
+        default="s3://pcd-ue1-01/flink-output/",
+        help="S3 output path for kafka-s3 job",
+    )
+
+    mysql_group = parser.add_argument_group("MySQL")
+    mysql_group.add_argument(
+        "--mysql_host",
+        default="common-test.cpwuo9y53vjh.us-east-1.rds.amazonaws.com",
+        help="MySQL host",
+    )
+    mysql_group.add_argument(
+        "--mysql_port",
+        default="3306",
+        help="MySQL port",
+    )
+    mysql_group.add_argument(
+        "--mysql_database",
+        default="test_db",
+        help="MySQL database",
+    )
+    mysql_group.add_argument(
+        "--mysql_table",
+        default="kafka_sink_data",
+        help="MySQL table",
+    )
+    mysql_group.add_argument(
+        "--mysql_user",
+        default="admin",
+        help="MySQL username",
+    )
+    mysql_group.add_argument(
+        "--mysql_password",
+        default="",
+        help="MySQL password",
+    )
+
     args = parser.parse_args()
     quick_start(args)
+
+
+if __name__ == "__main__":
+    main()

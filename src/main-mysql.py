@@ -25,8 +25,12 @@ PROPERTY_GROUP_ID = "FlinkApplicationProperties"
 class JobConfig:
     kafka_bootstrap: str
     kafka_topic: str
-    s3_output_path: str
-    aws_region: str
+    mysql_host: str
+    mysql_port: str
+    mysql_database: str
+    mysql_table: str
+    mysql_user: str
+    mysql_password: str
 
 
 def is_running_on_msf() -> bool:
@@ -47,14 +51,18 @@ def load_config_from_msf() -> JobConfig:
     return JobConfig(
         kafka_bootstrap=props["kafka.bootstrap"],
         kafka_topic=props["kafka.topic"],
-        s3_output_path=props["s3.output.path"],
-        aws_region=props.get("aws.region", "us-east-1"),
+        mysql_host=props["mysql.host"],
+        mysql_port=props.get("mysql.port", "3306"),
+        mysql_database=props["mysql.database"],
+        mysql_table=props["mysql.table"],
+        mysql_user=props["mysql.user"],
+        mysql_password=props["mysql.password"],
     )
 
 
 def load_config_from_args() -> JobConfig:
     parser = argparse.ArgumentParser(
-        description="Kafka to S3 Flink Job",
+        description="Kafka to MySQL Flink Job",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -64,18 +72,26 @@ def load_config_from_args() -> JobConfig:
     )
     parser.add_argument("--kafka-topic", default="test", help="Kafka topic")
     parser.add_argument(
-        "--s3-output-path",
-        default="s3://pcd-ue1-01/flink-output/",
-        help="S3 output path",
+        "--mysql-host",
+        default="common-test.cpwuo9y53vjh.us-east-1.rds.amazonaws.com",
+        help="MySQL host",
     )
-    parser.add_argument("--aws-region", default="us-east-1", help="AWS region")
+    parser.add_argument("--mysql-port", default="3306", help="MySQL port")
+    parser.add_argument("--mysql-database", default="test_db", help="MySQL database")
+    parser.add_argument("--mysql-table", default="kafka_sink_data", help="MySQL table")
+    parser.add_argument("--mysql-user", default="admin", help="MySQL user")
+    parser.add_argument("--mysql-password", default="", help="MySQL password")
 
     args = parser.parse_args()
     return JobConfig(
         kafka_bootstrap=args.kafka_bootstrap,
         kafka_topic=args.kafka_topic,
-        s3_output_path=args.s3_output_path,
-        aws_region=args.aws_region,
+        mysql_host=args.mysql_host,
+        mysql_port=args.mysql_port,
+        mysql_database=args.mysql_database,
+        mysql_table=args.mysql_table,
+        mysql_user=args.mysql_user,
+        mysql_password=args.mysql_password,
     )
 
 
@@ -100,14 +116,16 @@ def create_table_environment() -> TableEnvironment:
             logger.warning(
                 f"JAR not found: {current_dir}/target/pyflink-dependencies.jar"
             )
-            logger.warning("Run 'mvn clean package -P kafka-s3' first")
+            logger.warning("Run 'mvn clean package -P mysql' first")
 
     return table_env
 
 
 def run_job(config: JobConfig):
     logger.info(f"Kafka: {config.kafka_bootstrap} / {config.kafka_topic}")
-    logger.info(f"S3 Output: {config.s3_output_path}")
+    logger.info(
+        f"MySQL: {config.mysql_host}:{config.mysql_port}/{config.mysql_database}.{config.mysql_table}"
+    )
 
     table_env = create_table_environment()
 
@@ -115,6 +133,8 @@ def run_job(config: JobConfig):
         CREATE TABLE kafka_source (
             id BIGINT,
             username STRING,
+            email STRING,
+            created_at TIMESTAMP(3),
             proc_time AS PROCTIME()
         ) WITH (
             'connector' = 'kafka',
@@ -128,38 +148,41 @@ def run_job(config: JobConfig):
     """
 
     create_sink_sql = f"""
-        CREATE TABLE s3_sink (
-            window_start TIMESTAMP(3),
-            window_end TIMESTAMP(3),
-            record_count BIGINT,
-            unique_users BIGINT,
-            created_at TIMESTAMP(3)
+        CREATE TABLE mysql_sink (
+            id BIGINT,
+            username STRING,
+            email STRING,
+            created_at TIMESTAMP(3),
+            updated_at TIMESTAMP(3),
+            PRIMARY KEY (id) NOT ENFORCED
         ) WITH (
-            'connector' = 'filesystem',
-            'path' = '{config.s3_output_path}',
-            'format' = 'json',
-            'sink.rolling-policy.rollover-interval' = '1min',
-            'sink.rolling-policy.check-interval' = '30s'
+            'connector' = 'jdbc',
+            'url' = 'jdbc:mysql://{config.mysql_host}:{config.mysql_port}/{config.mysql_database}?useSSL=false&allowPublicKeyRetrieval=true',
+            'table-name' = '{config.mysql_table}',
+            'username' = '{config.mysql_user}',
+            'password' = '{config.mysql_password}',
+            'sink.buffer-flush.max-rows' = '1000',
+            'sink.buffer-flush.interval' = '10s',
+            'sink.max-retries' = '3'
         )
     """
 
     insert_sql = """
-        INSERT INTO s3_sink
+        INSERT INTO mysql_sink
         SELECT
-            TUMBLE_START(proc_time, INTERVAL '1' MINUTE) as window_start,
-            TUMBLE_END(proc_time, INTERVAL '1' MINUTE) as window_end,
-            COUNT(*) as record_count,
-            COUNT(DISTINCT username) as unique_users,
-            CURRENT_TIMESTAMP as created_at
+            id,
+            username,
+            email,
+            created_at,
+            CURRENT_TIMESTAMP as updated_at
         FROM kafka_source
-        GROUP BY TUMBLE(proc_time, INTERVAL '1' MINUTE)
     """
 
     try:
         logger.info("Creating Kafka source table")
         table_env.execute_sql(create_source_sql)
 
-        logger.info("Creating S3 sink table")
+        logger.info("Creating MySQL sink table")
         table_env.execute_sql(create_sink_sql)
 
         logger.info("Starting data processing")

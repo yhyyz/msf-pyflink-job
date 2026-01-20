@@ -1,136 +1,196 @@
+from __future__ import annotations
+
 import boto3
 import json
+import logging
+import os
 import time
 import zipfile
-import os
+
 from botocore.exceptions import ClientError
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+
 class FlinkManager:
-    def __init__(self, region='us-east-1'):
-        self.client = boto3.client('kinesisanalyticsv2', region_name=region)
-        self.s3_client = boto3.client('s3', region_name=region)
-        self.iam_client = boto3.client('iam', region_name=region)
+    def __init__(self, region="us-east-1", s3_bucket=None):
+        self.client = boto3.client("kinesisanalyticsv2", region_name=region)
+        self.s3_client = boto3.client("s3", region_name=region)
+        self.iam_client = boto3.client("iam", region_name=region)
         self.region = region
-        self.service_role_name = 'kinesis-analytics-service-role'
-        
+        self.s3_bucket = s3_bucket
+        self.service_role_name = "msf-flink-service-role"
+
     def ensure_service_role(self):
-        """Ensure the required IAM service role exists, create if not"""
         try:
-            # Check if role exists
             role_arn = self._get_service_role_arn()
             if role_arn:
-                print(f"IAM service role already exists: {role_arn}")
+                logger.info(f"IAM service role already exists: {role_arn}")
                 return role_arn
-            
-            # Create role if it doesn't exist
             return self._create_service_role()
-            
         except Exception as e:
-            print(f"Error managing IAM role: {e}")
+            logger.error(f"Error managing IAM role: {e}")
             return None
-    
+
     def _get_service_role_arn(self):
-        """Get the ARN of the existing service role"""
         try:
             response = self.iam_client.get_role(RoleName=self.service_role_name)
-            return response['Role']['Arn']
+            return response["Role"]["Arn"]
         except self.iam_client.exceptions.NoSuchEntityException:
             return None
         except Exception as e:
-            print(f"Error checking role existence: {e}")
+            logger.error(f"Error checking role existence: {e}")
             return None
-    
+
     def _create_service_role(self):
-        """Create the IAM service role for Kinesis Analytics"""
         try:
-            # Trust policy for Kinesis Analytics
             trust_policy = {
                 "Version": "2012-10-17",
                 "Statement": [
                     {
                         "Effect": "Allow",
-                        "Principal": {
-                            "Service": "kinesisanalytics.amazonaws.com"
-                        },
-                        "Action": "sts:AssumeRole"
+                        "Principal": {"Service": "kinesisanalytics.amazonaws.com"},
+                        "Action": "sts:AssumeRole",
                     }
-                ]
+                ],
             }
-            
-            # Permissions policy
+
+            s3_resource = ["arn:aws:s3:::*", "arn:aws:s3:::*/*"]
+            if self.s3_bucket:
+                s3_resource = [
+                    f"arn:aws:s3:::{self.s3_bucket}",
+                    f"arn:aws:s3:::{self.s3_bucket}/*",
+                ]
+
             permissions_policy = {
                 "Version": "2012-10-17",
                 "Statement": [
                     {
+                        "Sid": "S3Access",
                         "Effect": "Allow",
                         "Action": [
-                            "glue:*",
+                            "s3:GetObject",
+                            "s3:PutObject",
+                            "s3:DeleteObject",
+                            "s3:ListBucket",
+                            "s3:GetBucketLocation",
                         ],
-                        "Resource": "*"
+                        "Resource": s3_resource,
                     },
                     {
+                        "Sid": "GlueAccess",
                         "Effect": "Allow",
                         "Action": [
-                            "s3:*",
+                            "glue:GetDatabase",
+                            "glue:GetDatabases",
+                            "glue:CreateDatabase",
+                            "glue:GetTable",
+                            "glue:GetTables",
+                            "glue:CreateTable",
+                            "glue:UpdateTable",
+                            "glue:DeleteTable",
+                            "glue:GetPartitions",
+                            "glue:BatchCreatePartition",
+                            "glue:BatchDeletePartition",
                         ],
-                        "Resource": "*"
+                        "Resource": "*",
                     },
                     {
+                        "Sid": "LakeFormationAccess",
                         "Effect": "Allow",
-                        "Action": [
-                            "ec2:*",
-                        ],
-                        "Resource": "*"
+                        "Action": ["lakeformation:GetDataAccess"],
+                        "Resource": "*",
                     },
                     {
+                        "Sid": "CloudWatchLogs",
                         "Effect": "Allow",
                         "Action": [
                             "logs:CreateLogGroup",
                             "logs:CreateLogStream",
                             "logs:PutLogEvents",
                             "logs:DescribeLogGroups",
-                            "logs:DescribeLogStreams"
+                            "logs:DescribeLogStreams",
                         ],
-                        "Resource": "*"
-                    }
-                ]
+                        "Resource": "arn:aws:logs:*:*:*",
+                    },
+                    {
+                        "Sid": "KinesisAnalytics",
+                        "Effect": "Allow",
+                        "Action": [
+                            "kinesisanalytics:DescribeApplication",
+                            "kinesisanalytics:ListApplications",
+                        ],
+                        "Resource": "*",
+                    },
+                    {
+                        "Sid": "VPCAccess",
+                        "Effect": "Allow",
+                        "Action": [
+                            "ec2:DescribeVpcs",
+                            "ec2:DescribeSubnets",
+                            "ec2:DescribeSecurityGroups",
+                            "ec2:DescribeNetworkInterfaces",
+                            "ec2:CreateNetworkInterface",
+                            "ec2:DeleteNetworkInterface",
+                            "ec2:DescribeDhcpOptions",
+                        ],
+                        "Resource": "*",
+                    },
+                    {
+                        "Sid": "ENIManagement",
+                        "Effect": "Allow",
+                        "Action": ["ec2:CreateNetworkInterfacePermission"],
+                        "Resource": "arn:aws:ec2:*:*:network-interface/*",
+                        "Condition": {
+                            "StringEquals": {
+                                "ec2:AuthorizedService": "kinesisanalytics.amazonaws.com"
+                            }
+                        },
+                    },
+                ],
             }
-            
-            # Create role
+
             self.iam_client.create_role(
                 RoleName=self.service_role_name,
                 AssumeRolePolicyDocument=json.dumps(trust_policy),
-                Path='/service-role/',
-                Description='Service role for Kinesis Analytics applications'
+                Path="/service-role/",
+                Description="Service role for MSF Flink applications",
             )
-            
-            # Attach inline policy
+
             self.iam_client.put_role_policy(
                 RoleName=self.service_role_name,
-                PolicyName='KinesisAnalyticsServicePolicy',
-                PolicyDocument=json.dumps(permissions_policy)
+                PolicyName=f"{self.service_role_name}-policy",
+                PolicyDocument=json.dumps(permissions_policy),
             )
-            
-            # Get account ID and construct ARN
-            sts = boto3.client('sts')
-            account_id = sts.get_caller_identity()['Account']
-            role_arn = f"arn:aws:iam::{account_id}:role/service-role/{self.service_role_name}"
-            
-            print(f"IAM service role created successfully: {role_arn}")
+
+            sts = boto3.client("sts")
+            account_id = sts.get_caller_identity()["Account"]
+            role_arn = (
+                f"arn:aws:iam::{account_id}:role/service-role/{self.service_role_name}"
+            )
+
+            logger.info(f"IAM service role created: {role_arn}")
             return role_arn
-            
+
         except Exception as e:
-            print(f"Error creating IAM role: {e}")
+            logger.error(f"Error creating IAM role: {e}")
             return None
-        
-    def create_python_application_zip(self, job_file_path, requirements_file_path, zip_name='pyflink-job.zip'):
+
+    def create_python_application_zip(
+        self, job_file_path, requirements_file_path, zip_name="pyflink-job.zip"
+    ):
         """Create zip file containing the PyFlink job and requirements.txt"""
-        with zipfile.ZipFile(zip_name, 'w') as zipf:
+        with zipfile.ZipFile(zip_name, "w") as zipf:
             # Add the main Python file
             zipf.write(job_file_path, os.path.basename(job_file_path))
-                # Add lib directory and all its contents
+            # Add lib directory and all its contents
             job_dir = os.path.dirname(job_file_path)
-            lib_dir = os.path.join(job_dir, 'lib')
+            lib_dir = os.path.join(job_dir, "lib")
             for root, dirs, files in os.walk(lib_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
@@ -138,191 +198,193 @@ class FlinkManager:
                     arcname = os.path.relpath(file_path, job_dir)
                     zipf.write(file_path, arcname)
             # Add requirements.txt
-            zipf.write(requirements_file_path, 'requirements.txt')
+            zipf.write(requirements_file_path, "requirements.txt")
         return zip_name
-    
+
     def upload_to_s3(self, file_path, bucket, key):
-        """Upload file to S3"""
         try:
             self.s3_client.upload_file(file_path, bucket, key)
-            print(f"Uploaded {file_path} to s3://{bucket}/{key}")
+            logger.info(f"Uploaded {file_path} to s3://{bucket}/{key}")
             return f"s3://{bucket}/{key}"
         except Exception as e:
-            print(f"Error uploading to S3: {e}")
+            logger.error(f"Error uploading to S3: {e}")
             return None
-    
-    def create_application(self, app_name, s3_bucket_arn, s3_object_key, subnet_id, sg_id,python_main_file='main.py',dep_jar='lib/pyflink-dependencies.jar'):
-        """Create Kinesis Analytics application for Python/PyFlink"""
+
+    def create_application(
+        self,
+        app_name,
+        s3_bucket_arn,
+        s3_object_key,
+        subnet_id,
+        sg_id,
+        python_main_file="main-kafka-iceberg.py",
+        dep_jar="lib/pyflink-dependencies.jar",
+        app_properties: dict[str, str] | None = None,
+    ):
+        """Create Kinesis Analytics application for Python/PyFlink
+
+        Args:
+            app_name: Application name
+            s3_bucket_arn: S3 bucket ARN for code
+            s3_object_key: S3 object key for code zip
+            subnet_id: VPC subnet ID
+            sg_id: Security group ID
+            python_main_file: Python entry file name
+            dep_jar: Dependency JAR path in zip
+            app_properties: Application properties dict (passed to FlinkApplicationProperties)
+        """
         try:
             # Ensure service role exists
             service_role_arn = self.ensure_service_role()
             if not service_role_arn:
-                print("Failed to create or get service role")
+                logger.error("Failed to create or get service role")
                 return None
-            
+
+            # Build property groups
+            property_groups = [
+                {
+                    "PropertyGroupId": "kinesis.analytics.flink.run.options",
+                    "PropertyMap": {
+                        "python": python_main_file,
+                        "jarfile": dep_jar,
+                    },
+                }
+            ]
+
+            # Add application properties if provided
+            if app_properties:
+                property_groups.append(
+                    {
+                        "PropertyGroupId": "FlinkApplicationProperties",
+                        "PropertyMap": app_properties,
+                    }
+                )
+
             response = self.client.create_application(
                 ApplicationName=app_name,
-                ApplicationDescription='pyflink-sql',
-                RuntimeEnvironment='FLINK-1_20',
+                ApplicationDescription="pyflink-sql",
+                RuntimeEnvironment="FLINK-1_20",
                 ServiceExecutionRole=service_role_arn,
                 ApplicationConfiguration={
-                    'ApplicationCodeConfiguration': {
-                        'CodeContent': {
-                            'S3ContentLocation': {
-                                'BucketARN': s3_bucket_arn,
-                                'FileKey': s3_object_key
+                    "ApplicationCodeConfiguration": {
+                        "CodeContent": {
+                            "S3ContentLocation": {
+                                "BucketARN": s3_bucket_arn,
+                                "FileKey": s3_object_key,
                             }
                         },
-                        'CodeContentType': 'ZIPFILE'
+                        "CodeContentType": "ZIPFILE",
                     },
-                    'EnvironmentProperties': {
-                        'PropertyGroups': [
-                            {
-                                'PropertyGroupId': 'kinesis.analytics.flink.run.options',
-                                'PropertyMap': {
-                                    'python': python_main_file,
-                                    'jarfile': dep_jar
-                                }
-                            }
-                        ]
-                    },
-                    'VpcConfigurations': [
-                        {
-                            'SubnetIds': [
-                                subnet_id
-                            ],
-                            'SecurityGroupIds': [
-                                sg_id
-                            ]
-                        },
+                    "EnvironmentProperties": {"PropertyGroups": property_groups},
+                    "VpcConfigurations": [
+                        {"SubnetIds": [subnet_id], "SecurityGroupIds": [sg_id]},
                     ],
-                    'FlinkApplicationConfiguration': {
-                        'CheckpointConfiguration': {
-                            'ConfigurationType': 'DEFAULT'
-                        },
-                        'MonitoringConfiguration': {
-                            'ConfigurationType': 'DEFAULT'
-                        },
-                        'ParallelismConfiguration': {
-                            'ConfigurationType': 'DEFAULT'
-                        }
+                    "FlinkApplicationConfiguration": {
+                        "CheckpointConfiguration": {"ConfigurationType": "DEFAULT"},
+                        "MonitoringConfiguration": {"ConfigurationType": "DEFAULT"},
+                        "ParallelismConfiguration": {"ConfigurationType": "DEFAULT"},
                     },
-                    'ApplicationSnapshotConfiguration': {
-                        'SnapshotsEnabled': False
-                    }
-                }
+                    "ApplicationSnapshotConfiguration": {"SnapshotsEnabled": False},
+                },
             )
-            print(f"Application {app_name} created successfully")
+            logger.info(f"Application {app_name} created successfully")
             return response
         except ClientError as e:
-            print(f"Error creating application: {e}")
+            logger.error(f"Error creating application: {e}")
             return None
-    
+
     def start_application(self, app_name):
-        """Start the application"""
         try:
             response = self.client.start_application(
                 ApplicationName=app_name,
                 RunConfiguration={
-                    'FlinkRunConfiguration': {
-                        'AllowNonRestoredState': True
+                    "FlinkRunConfiguration": {"AllowNonRestoredState": True},
+                    "ApplicationRestoreConfiguration": {
+                        "ApplicationRestoreType": "SKIP_RESTORE_FROM_SNAPSHOT"
                     },
-                    'ApplicationRestoreConfiguration': {
-                        'ApplicationRestoreType': 'SKIP_RESTORE_FROM_SNAPSHOT'
-                    }
-                }
+                },
             )
-            print(f"Application {app_name} started successfully")
+            logger.info(f"Application {app_name} started successfully")
             return response
         except ClientError as e:
-            print(f"Error starting application: {e}")
+            logger.error(f"Error starting application: {e}")
             return None
-    
+
     def stop_application(self, app_name):
-        """Stop the application"""
         try:
             response = self.client.stop_application(ApplicationName=app_name)
-            print(f"Application {app_name} stopped successfully")
+            logger.info(f"Application {app_name} stopped successfully")
             return response
         except ClientError as e:
-            print(f"Error stopping application: {e}")
+            logger.error(f"Error stopping application: {e}")
             return None
-    
+
     def get_application_status(self, app_name):
-        """Get application status"""
         try:
             response = self.client.describe_application(ApplicationName=app_name)
-            status = response['ApplicationDetail']['ApplicationStatus']
-            print(f"Application {app_name} status: {status}")
+            status = response["ApplicationDetail"]["ApplicationStatus"]
+            logger.info(f"Application {app_name} status: {status}")
             return status
         except ClientError as e:
-            print(f"Error getting application status: {e}")
+            logger.error(f"Error getting application status: {e}")
             return None
-    
+
     def get_application_details(self, app_name):
-        """Get detailed application information"""
         try:
             response = self.client.describe_application(ApplicationName=app_name)
-            return response['ApplicationDetail']
+            return response["ApplicationDetail"]
         except ClientError as e:
-            print(f"Error getting application details: {e}")
+            logger.error(f"Error getting application details: {e}")
             return None
-    
+
     def update_application(self, app_name, s3_bucket_arn, s3_object_key):
-        """Update application code"""
         try:
-            # Get current application version
             app_details = self.client.describe_application(ApplicationName=app_name)
-            current_version = app_details['ApplicationDetail']['ApplicationVersionId']
-            
+            current_version = app_details["ApplicationDetail"]["ApplicationVersionId"]
+
             response = self.client.update_application(
                 ApplicationName=app_name,
                 CurrentApplicationVersionId=current_version,
                 ApplicationConfigurationUpdate={
-                    'ApplicationCodeConfigurationUpdate': {
-                        'CodeContentUpdate': {
-                            'S3ContentLocationUpdate': {
-                                'BucketARNUpdate': s3_bucket_arn,
-                                'FileKeyUpdate': s3_object_key
+                    "ApplicationCodeConfigurationUpdate": {
+                        "CodeContentUpdate": {
+                            "S3ContentLocationUpdate": {
+                                "BucketARNUpdate": s3_bucket_arn,
+                                "FileKeyUpdate": s3_object_key,
                             }
                         }
                     }
-                }
+                },
             )
-            print(f"Application {app_name} updated successfully")
+            logger.info(f"Application {app_name} updated successfully")
             return response
         except ClientError as e:
-            print(f"Error updating application: {e}")
+            logger.error(f"Error updating application: {e}")
             return None
-    
+
     def delete_application(self, app_name):
-        """Delete application"""
         try:
-            # Stop application first if running
             status = self.get_application_status(app_name)
-            if status == 'RUNNING':
-                print("Stopping application before deletion...")
+            if status == "RUNNING":
+                logger.info("Stopping application before deletion...")
                 self.stop_application(app_name)
-                # Wait for application to stop
                 max_wait = 180
                 wait_time = 0
                 while wait_time < max_wait:
                     current_status = self.get_application_status(app_name)
-                    if current_status == 'READY':
+                    if current_status == "READY":
                         break
                     time.sleep(5)
                     wait_time += 5
-            
-            # Get application details to get CreateTimestamp
+
             app_details = self.client.describe_application(ApplicationName=app_name)
-            create_timestamp = app_details['ApplicationDetail']['CreateTimestamp']
-            
+            create_timestamp = app_details["ApplicationDetail"]["CreateTimestamp"]
+
             response = self.client.delete_application(
-                ApplicationName=app_name,
-                CreateTimestamp=create_timestamp
+                ApplicationName=app_name, CreateTimestamp=create_timestamp
             )
-            print(f"Application {app_name} deleted successfully")
+            logger.info(f"Application {app_name} deleted successfully")
             return response
         except ClientError as e:
-            print(f"Error deleting application: {e}")
+            logger.error(f"Error deleting application: {e}")
             return None

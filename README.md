@@ -4,107 +4,339 @@
 * MSF Flink 1.20
 * Iceberg 1.9.0
 
-### 可以使用功能
-
-1. pyflink simple test 用户简单测试,对应src中main-simple.py
-2. pyflink kafka s3 sink  使用kafka, 对应src中main-kafka-s3.py, 依赖对应pom-kafka-s3.xml
-3. python  kafka iceberg sink  使用iceberg，对应src中main.py, 依赖对应pom.xml
-
-### 依赖编译方式
+### 项目结构
 
 ```
-# 执行如下命令编译即可，jdk 11,  maven 3.9.x. 
+msf-pyflink-job/
+├── pom.xml                         # Maven 配置 (支持多 Profile)
+├── assembly/
+│   └── assembly.xml                # Maven Assembly 打包配置
+│
+├── src/                            # Flink 作业代码 (本地 + MSF 通用)
+│   ├── main-kafka-iceberg.py       # Kafka → Iceberg
+│   ├── main-simple.py              # 简单测试
+│   ├── main-kafka-s3.py            # Kafka → S3
+│   ├── main-mysql.py               # Kafka JSON → MySQL
+│   ├── main-debezium-mysql.py      # Debezium CDC → MySQL
+│   ├── main-debezium-iceberg.py    # Debezium CDC → Iceberg
+│   ├── flink_manager.py            # Flink 管理工具类
+│   └── main/java/.../HadoopUtils.java  # Hadoop 配置工具类
+│
+├── setup_database.py               # 创建 Glue Database + LakeFormation 权限
+├── quick_start.py                  # 快速创建 MSF 应用
+│
+└── target/                         # 编译输出目录
+    ├── pyflink-dependencies.jar    # 依赖 JAR
+    └── msf-pyflink-*.zip           # MSF 部署包
+```
+
+### 文件说明
+
+#### 工具脚本
+
+| 文件 | 说明 |
+|------|------|
+| `setup_database.py` | 创建 Glue Database 和 LakeFormation 权限 |
+| `quick_start.py` | 快速创建 MSF 应用并上传代码 (自动创建 IAM Role) |
+
+#### Flink 作业脚本 (src/)
+
+所有脚本支持**本地运行**和 **MSF 部署**，自动检测运行环境。本地运行时自动启用 Flink Web UI (http://localhost:8081)。
+
+| 文件 | 说明 | 依赖 Profile |
+|------|------|--------------|
+| `main-simple.py` | 简单测试，无外部依赖 | - |
+| `main-kafka-iceberg.py` | Kafka JSON 聚合写入 Iceberg | `iceberg` |
+| `main-kafka-s3.py` | Kafka JSON 写入 S3 | `kafka-s3` |
+| `main-mysql.py` | Kafka JSON 写入 MySQL | `mysql` |
+| `main-debezium-mysql.py` | Debezium CDC 写入 MySQL | `mysql` |
+| `main-debezium-iceberg.py` | Debezium CDC 写入 Iceberg | `debezium` |
+
+### 功能列表
+
+| 功能 | Python 文件 | Maven Profile | 说明 |
+|------|-------------|---------------|------|
+| Simple Test | `src/main-simple.py` | - | 简单测试 |
+| Kafka → S3 | `src/main-kafka-s3.py` | `kafka-s3` | Kafka 数据写入 S3 |
+| Kafka → Iceberg | `src/main-kafka-iceberg.py` | `iceberg` (默认) | Kafka 数据写入 Iceberg |
+| Kafka → MySQL | `src/main-mysql.py` | `mysql` | Kafka JSON 数据写入 MySQL |
+| Debezium CDC → MySQL | `src/main-debezium-mysql.py` | `mysql` | Debezium CDC 写入 MySQL |
+| Debezium CDC → Iceberg | `src/main-debezium-iceberg.py` | `debezium` | Debezium CDC 写入 Iceberg |
+
+### 依赖编译
+
+```bash
+# 环境要求: JDK 11, Maven 3.9.x
 git clone https://github.com/yhyyz/msf-pyflink-job.git
 cd msf-pyflink-job
-mvn clean package 
+
+# Kafka → Iceberg (默认)
+mvn clean package
+
+# Kafka → S3
+mvn clean package -P kafka-s3
+
+# Kafka → MySQL / Debezium CDC → MySQL
+mvn clean package -P mysql
+
+# Debezium CDC → Iceberg (包含所有依赖)
+mvn clean package -P debezium
 ```
 
-编译之后在target目录下会有zip和依赖jar。在MSF上提交作业只需要zip即可同时需要配置如下参数
+编译输出：
 
-| Group ID                              | Key       | Mandatory | Value                          | Notes                                                                     |
-|---------------------------------------|-----------|-----------|--------------------------------|---------------------------------------------------------------------------|
-| `kinesis.analytics.flink.run.options` | `python`  | Y         | `main.py`                      | The Python script containing the main() method to start the job.          |
-| `kinesis.analytics.flink.run.options` | `jarfile` | Y         | `lib/pyflink-dependencies.jar` | Location (inside the zip) of the fat-jar containing all jar dependencies. |
+| Profile | 输出文件 | 大小 |
+|---------|----------|------|
+| `kafka-s3` | `target/msf-pyflink-kafka-s3-1.0.0.zip` | ~54M |
+| `mysql` | `target/msf-pyflink-mysql-1.0.0.zip` | ~55M |
+| `iceberg` | `target/msf-pyflink-iceberg-1.0.0.zip` | ~143M |
+| `debezium` | `target/msf-pyflink-debezium-1.0.0.zip` | ~146M |
 
+### MSF 作业配置
+
+#### 运行时配置 (kinesis.analytics.flink.run.options)
+
+| Key | Value | 说明 |
+|-----|-------|------|
+| `python` | `main-kafka-iceberg.py` | Python 入口文件 |
+| `jarfile` | `lib/pyflink-dependencies.jar` | 依赖 JAR 路径 |
+
+#### 应用属性 (FlinkApplicationProperties)
+
+通过 `quick_start.py` 部署时自动配置，或在 MSF 控制台手动添加：
+
+**Kafka 配置**：
+| Key | Value | 说明 |
+|-----|-------|------|
+| `kafka.bootstrap` | `your-kafka:9092` | Kafka bootstrap servers |
+| `kafka.topic` | `test` | Kafka topic |
+
+**Iceberg 配置** (main-kafka-iceberg.py, main-debezium-iceberg.py)：
+| Key | Value | 说明 |
+|-----|-------|------|
+| `iceberg.warehouse` | `s3://bucket/warehouse/` | Iceberg warehouse 路径 |
+| `iceberg.database` | `test_iceberg_db` | Iceberg 数据库名 |
+| `iceberg.table` | `kafka_agg_sink` | Iceberg 表名 |
+| `aws.region` | `us-east-1` | AWS 区域 |
+
+**MySQL 配置** (main-mysql.py, main-debezium-mysql.py)：
+| Key | Value | 说明 |
+|-----|-------|------|
+| `mysql.host` | `your-host.rds.amazonaws.com` | MySQL 主机 |
+| `mysql.port` | `3306` | MySQL 端口 |
+| `mysql.database` | `test_db` | MySQL 数据库 |
+| `mysql.table` | `kafka_sink_data` | MySQL 表名 |
+| `mysql.user` | `admin` | MySQL 用户名 |
+| `mysql.password` | `xxx` | MySQL 密码 |
+
+**S3 配置** (main-kafka-s3.py)：
+| Key | Value | 说明 |
+|-----|-------|------|
+| `s3.output.path` | `s3://bucket/output/` | S3 输出路径 |
+
+### 前置条件设置
+
+使用 `setup_database.py` 创建 Glue Database（IAM Role 由 `quick_start.py` 自动创建）：
+
+```bash
+# 安装依赖
+pip install boto3
+
+# 创建 Glue Database
+python setup_database.py --region us-east-1 --s3-bucket your-bucket
+
+# 自定义数据库名
+python setup_database.py --region us-east-1 --s3-bucket your-bucket --database my_iceberg_db
+
+# 查看帮助
+python setup_database.py --help
+```
+
+脚本会创建：
+- Glue Database (已配置 IAM_ALLOWED_PRINCIPALS 权限)
+
+IAM Role 由 `quick_start.py` → `flink_manager.py` 自动创建，包含：
+- S3、Glue、LakeFormation、CloudWatch、VPC 权限
 
 ### 快速开始
-为了方便使用添加了 quick_start.py ，可以执行这个python脚本，快速创建一个kafka sink iceberg的作业
 
-```
-# 注意修改src/main.py 中如下相关参数为你的值
-iceberg_catalog_name = "iceberg_catalog"
-iceberg_database_name = "default_db"
-iceberg_table_name = "msk_stats"
-iceberg_warehouse_path = "s3://xxx/tmp/msf-test/"
-kafka_server="b-1.xxxx.c3.kafka.ap-southeast-1.amazonaws.com:9092"
-kafka_topic="test"
+```bash
+# 1. 编译
+mvn clean package
 
-# 编译依赖
-mvn clean package 
+# 2. 创建 Glue Database (一次性)
+python setup_database.py --region us-east-1 --s3-bucket your-bucket
 
-# 例子
+# 3. 部署 MSF 应用 (使用 MSK cluster name 自动获取网络配置)
 python quick_start.py \
-  --app_name flink-msk-iceberg-sink-demo \
-  --s3_bucket pcd-01 \
-  --s3_key flink-jobs/flink-msk-iceberg-sink-demo.zip \
-  --subnet_id subnet-0f79e4471cfa74ced \
-  --sg_id sg-f83dcdb3 \
-  --aws_region ap-southeast-1 \
-  --local_dep_jar_path target/managed-flink-pyfink-msk-iceberg-1.0.0.zip
-  
-# 参数说明
---app_name: 应用程序名称
---s3_bucket: S3存储桶名称  
---s3_key: S3对象键
---subnet_id: 子网ID
---sg_id: 安全组ID
---aws_region: AWS区域
---local_dep_jar_path: 本地依赖JAR路
+  --app_name flink-msk-iceberg-demo \
+  --msk_cluster_name msk-log-stream \
+  --kafka_topic your-topic \
+  --iceberg_warehouse s3://your-bucket/iceberg-warehouse/ \
+  --iceberg_database test_iceberg_db \
+  --iceberg_table kafka_agg_sink
+
+# 或者手动指定网络配置
+python quick_start.py \
+  --app_name flink-msk-iceberg-demo \
+  --subnet_id subnet-xxx \
+  --sg_id sg-xxx \
+  --kafka_bootstrap your-kafka:9092 \
+  --kafka_topic your-topic \
+  ...
+
+# 4. 部署其他类型作业
+# Debezium CDC → Iceberg
+python quick_start.py \
+  --app_name flink-cdc-iceberg \
+  --python_main main-debezium-iceberg.py \
+  --local_dep_jar_path target/msf-pyflink-debezium-1.0.0.zip \
+  --kafka_topic cdc-topic \
+  ...
+
+# Kafka → MySQL
+python quick_start.py \
+  --app_name flink-kafka-mysql \
+  --python_main main-mysql.py \
+  --local_dep_jar_path target/msf-pyflink-mysql-1.0.0.zip \
+  --mysql_host your-mysql.rds.amazonaws.com \
+  --mysql_database test_db \
+  --mysql_table kafka_sink \
+  --mysql_user admin \
+  --mysql_password xxx \
+  ...
+
+# 查看所有参数
+python quick_start.py --help
 ```
 
-```
-# kafka 发送几个数据测试
-export bs="b-1.xxx.ap-southeast-1.amazonaws.com:9092"
-# ./bin/kafka-topics.sh --create --topic test --partitions 16 --replication-factor 3 --bootstrap-server $bs
-./bin/kafka-console-producer.sh --topic test --bootstrap-server $bs
+`--msk_cluster_name` 会自动获取：
+- Kafka bootstrap servers
+- 私有子网 ID
+- 安全组 ID
 
-{"id":1,"name":"aws"}
-```
-
-### 注意事项
-#### 代码权限相关
-1. 如果python代码有错误，提交作业会失败，在日志中可以看到 CodeError.InvalidApplicationCode 类似错误
-2. 如果MSF配置的iam role没有glue catalog的权限，或者有glue catalog权限，但是数据库，表的权限是只有LF的权限，也会有CodeError.InvalidApplicationCode 类似错误。但从INFO日志中可以找到权限异常。 如果是LF权限问题，需要在LF中对使用的database为IAMAllowedPrincipa 添加super权限，以便让MSF 有创建iceberg glue库表权限
-3. 如果MSF配置的iam role没有s3 权限，也会有 CodeError.InvalidApplicationCode 类似错误，从INFO日志中可以看到相关权限异常。
-
-### 依赖相关
-1. 使用MSF时, pyflink 相关的依赖jar，比如iceberg，kafka 等，都需要maven 编译打包到zip中使用
-2. 使用udf需要python的额外库，可以在添加requirenments.txt，可以参考 https://github.com/aws-samples/amazon-managed-service-for-apache-flink-examples/tree/main/python/PythonDependencies
-3. 如果不使用iceberg,将 src/main文件执行 mv src/mian src/main.bak 
+如果同时提供了 `--subnet_id`、`--sg_id`、`--kafka_bootstrap`，则优先使用手动提供的值。
 
 ### 本地调试
-main-local.py 提供了本地调试flink的方式，运行方式如下
-```
-# 安装uv和依赖
+
+所有 `src/main-*.py` 文件支持本地直接运行，自动检测运行环境：
+- **本地运行**：使用命令行参数（带默认值），自动启用 Flink Web UI
+- **MSF 运行**：从 `/etc/flink/application_properties.json` 读取配置
+
+```bash
+# 创建虚拟环境
 uv venv -p 3.11
-source ./venv/bin/activate
-uv pip install boto3
-uv pip install apache-flink==1.20.0
-uv pip install setuptools
+source .venv/bin/activate
 
-# 执行
-export IS_LOCAL=true
-python main-local.py
+# 安装依赖
+uv pip install boto3 apache-flink==1.20.0 setuptools
 
-# flink web ui 端口设定的是本机的 8081 直接访问即可
-# flink 日志 .venv/lib/python3.11/site-packages/pyflink/log/
+# 编译 (根据需要选择 profile)
+mvn clean package -P iceberg    # 或 mysql, debezium
 
+# 后续运行时激活环境
+source .venv/bin/activate
 ```
 
-### 作业提交相关截图
+> **注意**: 本项目使用 `.venv` 目录下的虚拟环境，运行任何 Python 脚本前需先执行 `source .venv/bin/activate`
+
+#### 运行示例
+
+```bash
+# Kafka → Iceberg (查看帮助)
+python src/main-kafka-iceberg.py --help
+
+# 使用默认参数运行
+python src/main-kafka-iceberg.py
+
+# 自定义参数
+python src/main-kafka-iceberg.py \
+  --kafka-bootstrap your-kafka:9092 \
+  --kafka-topic your-topic \
+  --iceberg-warehouse s3://your-bucket/warehouse/ \
+  --iceberg-database test_iceberg_db \
+  --iceberg-table my_table \
+  --aws-region us-east-1
+
+# Kafka → MySQL
+python src/main-mysql.py \
+  --kafka-bootstrap your-kafka:9092 \
+  --kafka-topic your-topic \
+  --mysql-host your-mysql.rds.amazonaws.com \
+  --mysql-database test_db \
+  --mysql-table kafka_sink \
+  --mysql-user admin \
+  --mysql-password xxx
+
+# Debezium CDC → Iceberg
+python src/main-debezium-iceberg.py \
+  --kafka-bootstrap your-kafka:9092 \
+  --kafka-topic cdc-topic \
+  --iceberg-warehouse s3://your-bucket/warehouse/ \
+  --iceberg-database test_iceberg_db \
+  --iceberg-table cdc_sync \
+  --aws-region us-east-1
+
+# Debezium CDC → MySQL
+python src/main-debezium-mysql.py \
+  --kafka-bootstrap your-kafka:9092 \
+  --kafka-topic cdc-topic \
+  --mysql-host your-mysql.rds.amazonaws.com \
+  --mysql-database test_db \
+  --mysql-table cdc_sync \
+  --mysql-user admin \
+  --mysql-password xxx
+```
+
+#### Flink Web UI
+
+本地运行时自动启用，访问 http://localhost:8081 查看作业状态
+
+日志目录: `.venv/lib/python3.11/site-packages/pyflink/log/`
+
+### 注意事项
+
+#### 权限相关
+1. Python 代码错误会导致 `CodeError.InvalidApplicationCode`
+2. IAM Role 需要 Glue、S3、LakeFormation 权限
+3. LakeFormation 权限问题需要给 database 添加 `IAM_ALLOWED_PRINCIPALS` 的 ALL 权限
+
+#### 依赖相关
+1. PyFlink 依赖 JAR 需要打包到 zip 中
+2. UDF 需要的 Python 库可通过 `requirements.txt` 添加，参考 [AWS 示例](https://github.com/aws-samples/amazon-managed-service-for-apache-flink-examples/tree/main/python/PythonDependencies)
+
+### Debezium CDC 数据格式
+
+```json
+{
+  "before": null,
+  "after": {
+    "id": 1,
+    "username": "user1",
+    "email": "user1@example.com"
+  },
+  "op": "c",
+  "ts_ms": 1704067200000,
+  "source": {
+    "db": "test_db",
+    "table": "users"
+  }
+}
+```
+
+| op | 含义 |
+|----|------|
+| `c` | CREATE (插入) |
+| `u` | UPDATE (更新) |
+| `d` | DELETE (删除) |
+| `r` | READ (快照) |
+
+### 截图
+
+#### MSF 作业配置
 ![](https://pcmyp.oss-cn-beijing.aliyuncs.com/markdown/202510220029587.png)
 ![](https://pcmyp.oss-cn-beijing.aliyuncs.com/markdown/202510220030317.png)
 ![](https://pcmyp.oss-cn-beijing.aliyuncs.com/markdown/202510220031134.png)
 
-### local 模式截图
+#### 本地模式
 ![](https://pcmyp.oss-cn-beijing.aliyuncs.com/markdown/202510220122940.png)

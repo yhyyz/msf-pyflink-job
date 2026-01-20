@@ -7,11 +7,13 @@
     </formats>
     <includeBaseDirectory>false</includeBaseDirectory>
     <fileSets>
+        <!-- 包含所有main-*.py文件 -->
         <fileSet>
-	    <directory>${project.basedir}/src</directory>
+            <directory>${project.basedir}/src</directory>
             <outputDirectory>/</outputDirectory>
             <includes>
                 <include>main.py</include>
+                <include>main-*.py</include>
             </includes>
         </fileSet>
         <fileSet>
