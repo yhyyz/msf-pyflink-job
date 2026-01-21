@@ -207,7 +207,8 @@ uv sync
 source .venv/bin/activate
 
 # 1. 编译 (根据需要选择 profile)
-mvn clean package -P iceberg    # Kafka → Iceberg, Debezium CDC → Iceberg
+mvn clean package -P iceberg    # Kafka → Iceberg
+mvn clean package -P debezium   # Debezium CDC → Iceberg
 mvn clean package -P mysql      # Kafka → MySQL, Debezium CDC → MySQL
 mvn clean package -P doris      # Debezium CDC → Doris
 mvn clean package -P kafka-s3   # Kafka → S3
