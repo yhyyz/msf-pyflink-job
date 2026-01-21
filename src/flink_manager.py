@@ -254,67 +254,91 @@ class FlinkManager:
             dep_jar: Dependency JAR path in zip
             app_properties: Application properties dict (passed to FlinkApplicationProperties)
         """
-        try:
-            service_role_arn = self.ensure_service_role()
-            if not service_role_arn:
-                logger.error("Failed to create or get service role")
-                return None
+        service_role_arn = self.ensure_service_role()
+        if not service_role_arn:
+            logger.error("Failed to create or get service role")
+            return None
 
-            log_stream_arn = self._ensure_cloudwatch_log_group(app_name)
+        log_stream_arn = self._ensure_cloudwatch_log_group(app_name)
 
-            property_groups = [
+        property_groups = [
+            {
+                "PropertyGroupId": "kinesis.analytics.flink.run.options",
+                "PropertyMap": {
+                    "python": python_main_file,
+                    "jarfile": dep_jar,
+                },
+            }
+        ]
+
+        if app_properties:
+            property_groups.append(
                 {
-                    "PropertyGroupId": "kinesis.analytics.flink.run.options",
-                    "PropertyMap": {
-                        "python": python_main_file,
-                        "jarfile": dep_jar,
-                    },
+                    "PropertyGroupId": "FlinkApplicationProperties",
+                    "PropertyMap": app_properties,
                 }
-            ]
+            )
 
-            if app_properties:
-                property_groups.append(
-                    {
-                        "PropertyGroupId": "FlinkApplicationProperties",
-                        "PropertyMap": app_properties,
+        app_config = {
+            "ApplicationCodeConfiguration": {
+                "CodeContent": {
+                    "S3ContentLocation": {
+                        "BucketARN": s3_bucket_arn,
+                        "FileKey": s3_object_key,
                     }
+                },
+                "CodeContentType": "ZIPFILE",
+            },
+            "EnvironmentProperties": {"PropertyGroups": property_groups},
+            "VpcConfigurations": [
+                {"SubnetIds": [subnet_id], "SecurityGroupIds": [sg_id]},
+            ],
+            "FlinkApplicationConfiguration": {
+                "CheckpointConfiguration": {"ConfigurationType": "DEFAULT"},
+                "MonitoringConfiguration": {"ConfigurationType": "DEFAULT"},
+                "ParallelismConfiguration": {"ConfigurationType": "DEFAULT"},
+            },
+            "ApplicationSnapshotConfiguration": {"SnapshotsEnabled": False},
+        }
+
+        # Retry logic for IAM/S3 propagation delays
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.create_application(
+                    ApplicationName=app_name,
+                    ApplicationDescription="pyflink-sql",
+                    RuntimeEnvironment="FLINK-1_20",
+                    ServiceExecutionRole=service_role_arn,
+                    ApplicationConfiguration=app_config,
+                    CloudWatchLoggingOptions=[{"LogStreamARN": log_stream_arn}],
+                )
+                logger.info(f"Application {app_name} created successfully")
+                return response
+            except ClientError as e:
+                error_code = e.response.get("Error", {}).get("Code", "")
+                error_msg = str(e).lower()
+
+                # Check if it's an IAM/S3 propagation error
+                is_propagation_error = error_code == "InvalidArgumentException" and (
+                    "role" in error_msg
+                    or "s3" in error_msg
+                    or "privileges" in error_msg
                 )
 
-            app_config = {
-                "ApplicationCodeConfiguration": {
-                    "CodeContent": {
-                        "S3ContentLocation": {
-                            "BucketARN": s3_bucket_arn,
-                            "FileKey": s3_object_key,
-                        }
-                    },
-                    "CodeContentType": "ZIPFILE",
-                },
-                "EnvironmentProperties": {"PropertyGroups": property_groups},
-                "VpcConfigurations": [
-                    {"SubnetIds": [subnet_id], "SecurityGroupIds": [sg_id]},
-                ],
-                "FlinkApplicationConfiguration": {
-                    "CheckpointConfiguration": {"ConfigurationType": "DEFAULT"},
-                    "MonitoringConfiguration": {"ConfigurationType": "DEFAULT"},
-                    "ParallelismConfiguration": {"ConfigurationType": "DEFAULT"},
-                },
-                "ApplicationSnapshotConfiguration": {"SnapshotsEnabled": False},
-            }
+                if is_propagation_error and attempt < max_retries - 1:
+                    wait_time = 15 * (attempt + 1)  # 15s, 30s
+                    logger.warning(
+                        f"IAM/S3 not ready, retrying in {wait_time}s... "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(wait_time)
+                    continue
 
-            response = self.client.create_application(
-                ApplicationName=app_name,
-                ApplicationDescription="pyflink-sql",
-                RuntimeEnvironment="FLINK-1_20",
-                ServiceExecutionRole=service_role_arn,
-                ApplicationConfiguration=app_config,
-                CloudWatchLoggingOptions=[{"LogStreamARN": log_stream_arn}],
-            )
-            logger.info(f"Application {app_name} created successfully")
-            return response
-        except ClientError as e:
-            logger.error(f"Error creating application: {e}")
-            return None
+                logger.error(f"Error creating application: {e}")
+                return None
+
+        return None
 
     def _ensure_cloudwatch_log_group(self, app_name: str) -> str:
         """Create CloudWatch Log Group and Stream, return Log Stream ARN"""
