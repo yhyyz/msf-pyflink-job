@@ -301,7 +301,7 @@ class FlinkManager:
             "ApplicationSnapshotConfiguration": {"SnapshotsEnabled": False},
         }
 
-        # Retry logic for IAM/S3 propagation delays
+        # Retry logic for IAM assume role propagation delays
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -316,20 +316,17 @@ class FlinkManager:
                 logger.info(f"Application {app_name} created successfully")
                 return response
             except ClientError as e:
-                error_code = e.response.get("Error", {}).get("Code", "")
-                error_msg = str(e).lower()
+                error_msg = str(e)
 
-                # Check if it's an IAM/S3 propagation error
-                is_propagation_error = error_code == "InvalidArgumentException" and (
-                    "role" in error_msg
-                    or "s3" in error_msg
-                    or "privileges" in error_msg
+                # Only retry for IAM assume role propagation error
+                is_iam_assume_error = (
+                    "sufficient privileges to assume the role" in error_msg
                 )
 
-                if is_propagation_error and attempt < max_retries - 1:
+                if is_iam_assume_error and attempt < max_retries - 1:
                     wait_time = 15 * (attempt + 1)  # 15s, 30s
                     logger.warning(
-                        f"IAM/S3 not ready, retrying in {wait_time}s... "
+                        f"IAM role not ready, retrying in {wait_time}s... "
                         f"(attempt {attempt + 1}/{max_retries})"
                     )
                     time.sleep(wait_time)
