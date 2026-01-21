@@ -32,6 +32,8 @@ class FlinkManager:
             role_arn = self._get_service_role_arn()
             if role_arn:
                 logger.info(f"IAM service role already exists: {role_arn}")
+                if self.s3_bucket:
+                    self._ensure_s3_permission(self.s3_bucket)
                 return role_arn
             return self._create_service_role()
         except Exception as e:
@@ -47,6 +49,56 @@ class FlinkManager:
         except Exception as e:
             logger.error(f"Error checking role existence: {e}")
             return None
+
+    def _ensure_s3_permission(self, bucket: str):
+        """Ensure IAM role has S3 permission for the specified bucket"""
+        policy_name = f"{self.service_role_name}-policy"
+
+        try:
+            response = self.iam_client.get_role_policy(
+                RoleName=self.service_role_name,
+                PolicyName=policy_name,
+            )
+            policy_doc = response["PolicyDocument"]
+
+            s3_statement = next(
+                (s for s in policy_doc["Statement"] if s.get("Sid") == "S3Access"),
+                None,
+            )
+            if not s3_statement:
+                logger.warning("S3Access statement not found in policy")
+                return
+
+            resources = s3_statement.get("Resource", [])
+            if isinstance(resources, str):
+                resources = [resources]
+
+            if "arn:aws:s3:::*" in resources:
+                return
+
+            bucket_arn = f"arn:aws:s3:::{bucket}"
+            bucket_objects_arn = f"arn:aws:s3:::{bucket}/*"
+
+            if bucket_arn in resources and bucket_objects_arn in resources:
+                logger.info(f"S3 permission for bucket '{bucket}' already exists")
+                return
+
+            if bucket_arn not in resources:
+                resources.append(bucket_arn)
+            if bucket_objects_arn not in resources:
+                resources.append(bucket_objects_arn)
+
+            s3_statement["Resource"] = resources
+
+            self.iam_client.put_role_policy(
+                RoleName=self.service_role_name,
+                PolicyName=policy_name,
+                PolicyDocument=json.dumps(policy_doc),
+            )
+            logger.info(f"Added S3 permission for bucket '{bucket}'")
+
+        except Exception as e:
+            logger.warning(f"Failed to update S3 permission: {e}")
 
     def _create_service_role(self):
         try:
