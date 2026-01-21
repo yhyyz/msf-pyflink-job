@@ -3,6 +3,7 @@
 ### 版本
 * MSF Flink 1.20
 * Iceberg 1.9.0
+* Doris 3.1.3 (Flink Doris Connector 25.1.0)
 
 ### 项目结构
 
@@ -19,6 +20,7 @@ msf-pyflink-job/
 │   ├── main-mysql.py               # Kafka JSON → MySQL
 │   ├── main-debezium-mysql.py      # Debezium CDC → MySQL
 │   ├── main-debezium-iceberg.py    # Debezium CDC → Iceberg
+│   ├── main-debezium-doris.py      # Debezium CDC → Doris
 │   ├── flink_manager.py            # Flink 管理工具类
 │   └── main/java/.../HadoopUtils.java  # Hadoop 配置工具类
 │
@@ -51,6 +53,7 @@ msf-pyflink-job/
 | `main-mysql.py` | Kafka JSON 写入 MySQL | `mysql` |
 | `main-debezium-mysql.py` | Debezium CDC 写入 MySQL | `mysql` |
 | `main-debezium-iceberg.py` | Debezium CDC 写入 Iceberg | `debezium` |
+| `main-debezium-doris.py` | Debezium CDC 写入 Doris | `doris` |
 
 ### 功能列表
 
@@ -62,6 +65,7 @@ msf-pyflink-job/
 | Kafka → MySQL | `src/main-mysql.py` | `mysql` | Kafka JSON 数据写入 MySQL |
 | Debezium CDC → MySQL | `src/main-debezium-mysql.py` | `mysql` | Debezium CDC 写入 MySQL |
 | Debezium CDC → Iceberg | `src/main-debezium-iceberg.py` | `debezium` | Debezium CDC 写入 Iceberg |
+| Debezium CDC → Doris | `src/main-debezium-doris.py` | `doris` | Debezium CDC 写入 Doris |
 
 ### 依赖编译
 
@@ -81,6 +85,9 @@ mvn clean package -P mysql
 
 # Debezium CDC → Iceberg (包含所有依赖)
 mvn clean package -P debezium
+
+# Debezium CDC → Doris
+mvn clean package -P doris
 ```
 
 编译输出：
@@ -91,6 +98,7 @@ mvn clean package -P debezium
 | `mysql` | `target/msf-pyflink-mysql-1.0.0.zip` | ~55M |
 | `iceberg` | `target/msf-pyflink-iceberg-1.0.0.zip` | ~143M |
 | `debezium` | `target/msf-pyflink-debezium-1.0.0.zip` | ~146M |
+| `doris` | `target/msf-pyflink-doris-1.0.0.zip` | ~86M |
 
 ### MSF 作业配置
 
@@ -133,6 +141,15 @@ mvn clean package -P debezium
 | Key | Value | 说明 |
 |-----|-------|------|
 | `s3.output.path` | `s3://bucket/output/` | S3 输出路径 |
+
+**Doris 配置** (main-debezium-doris.py)：
+| Key | Value | 说明 |
+|-----|-------|------|
+| `doris.fenodes` | `10.0.0.10:8030` | Doris FE HTTP 地址 |
+| `doris.database` | `test_db` | Doris 数据库名 |
+| `doris.table` | `cdc_sync_doris` | Doris 表名 |
+| `doris.user` | `root` | Doris 用户名 |
+| `doris.password` | `` | Doris 密码 |
 
 ### 前置条件设置
 
@@ -206,6 +223,18 @@ python quick_start.py \
   --mysql_password xxx \
   ...
 
+# Debezium CDC → Doris
+python quick_start.py \
+  --app_name flink-cdc-doris \
+  --python_main main-debezium-doris.py \
+  --local_dep_jar_path target/msf-pyflink-doris-1.0.0.zip \
+  --kafka_topic cdc-topic \
+  --doris_fenodes 10.0.0.10:8030 \
+  --doris_database test_db \
+  --doris_table cdc_sync_doris \
+  --doris_user root \
+  ...
+
 # 查看所有参数
 python quick_start.py --help
 ```
@@ -232,7 +261,7 @@ source .venv/bin/activate
 uv pip install boto3 apache-flink==1.20.0 setuptools
 
 # 编译 (根据需要选择 profile)
-mvn clean package -P iceberg    # 或 mysql, debezium
+mvn clean package -P iceberg    # 或 mysql, debezium, doris
 
 # 后续运行时激活环境
 source .venv/bin/activate
@@ -286,6 +315,15 @@ python src/main-debezium-mysql.py \
   --mysql-table cdc_sync \
   --mysql-user admin \
   --mysql-password xxx
+
+# Debezium CDC → Doris
+python src/main-debezium-doris.py \
+  --kafka-bootstrap your-kafka:9092 \
+  --kafka-topic cdc-topic \
+  --doris-fenodes 10.0.0.10:8030 \
+  --doris-database test_db \
+  --doris-table cdc_sync_doris \
+  --doris-user root
 ```
 
 #### Flink Web UI
@@ -304,6 +342,29 @@ python src/main-debezium-mysql.py \
 #### 依赖相关
 1. PyFlink 依赖 JAR 需要打包到 zip 中
 2. UDF 需要的 Python 库可通过 `requirements.txt` 添加，参考 [AWS 示例](https://github.com/aws-samples/amazon-managed-service-for-apache-flink-examples/tree/main/python/PythonDependencies)
+
+#### Doris 相关
+1. Doris 目标表必须使用 **UNIQUE KEY** 模型才能支持 CDC 的 upsert/delete 操作
+2. 需要提前在 Doris 中创建目标表：
+
+```sql
+-- 在 Doris 中创建目标表
+CREATE DATABASE IF NOT EXISTS test_db;
+
+CREATE TABLE test_db.cdc_sync_doris (
+    id BIGINT,
+    name VARCHAR(256),
+    email VARCHAR(256),
+    created_at VARCHAR(64)
+)
+UNIQUE KEY(id)
+DISTRIBUTED BY HASH(id) BUCKETS 3
+PROPERTIES (
+    "replication_allocation" = "tag.location.default: 1"
+);
+```
+
+3. Doris FE HTTP 端口默认 8030，Query 端口默认 9030
 
 ### Debezium CDC 数据格式
 

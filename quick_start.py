@@ -62,6 +62,15 @@ JOB_PROPERTY_KEYS: dict[str, list[str]] = {
         "iceberg.table",
         "aws.region",
     ],
+    "main-debezium-doris.py": [
+        "kafka.bootstrap",
+        "kafka.topic",
+        "doris.fenodes",
+        "doris.database",
+        "doris.table",
+        "doris.user",
+        "doris.password",
+    ],
     "main-simple.py": [],
 }
 
@@ -147,6 +156,11 @@ def build_app_properties(args) -> dict[str, str]:
         "mysql.table": args.mysql_table,
         "mysql.user": args.mysql_user,
         "mysql.password": args.mysql_password,
+        "doris.fenodes": args.doris_fenodes,
+        "doris.database": args.doris_database,
+        "doris.table": args.doris_table,
+        "doris.user": args.doris_user,
+        "doris.password": args.doris_password,
         "aws.region": args.aws_region,
     }
 
@@ -345,6 +359,33 @@ def main():
         "--mysql_password",
         default="",
         help="MySQL password",
+    )
+
+    doris_group = parser.add_argument_group("Doris")
+    doris_group.add_argument(
+        "--doris_fenodes",
+        default="10.0.0.10:8030",
+        help="Doris FE HTTP address (host:http_port)",
+    )
+    doris_group.add_argument(
+        "--doris_database",
+        default="test_db",
+        help="Doris database",
+    )
+    doris_group.add_argument(
+        "--doris_table",
+        default="cdc_sync_doris",
+        help="Doris table",
+    )
+    doris_group.add_argument(
+        "--doris_user",
+        default="root",
+        help="Doris username",
+    )
+    doris_group.add_argument(
+        "--doris_password",
+        default="",
+        help="Doris password",
     )
 
     args = parser.parse_args()

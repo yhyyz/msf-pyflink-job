@@ -22,6 +22,7 @@ class FlinkManager:
         self.client = boto3.client("kinesisanalyticsv2", region_name=region)
         self.s3_client = boto3.client("s3", region_name=region)
         self.iam_client = boto3.client("iam", region_name=region)
+        self.logs_client = boto3.client("logs", region_name=region)
         self.region = region
         self.s3_bucket = s3_bucket
         self.service_role_name = "msf-flink-service-role"
@@ -174,6 +175,26 @@ class FlinkManager:
                 f"arn:aws:iam::{account_id}:role/service-role/{self.service_role_name}"
             )
 
+            # Wait for IAM role to propagate
+            logger.info("Waiting for IAM role to propagate...")
+            max_attempts = 10
+            for attempt in range(max_attempts):
+                try:
+                    self.iam_client.get_role(RoleName=self.service_role_name)
+                    self.iam_client.get_role_policy(
+                        RoleName=self.service_role_name,
+                        PolicyName=f"{self.service_role_name}-policy",
+                    )
+                    time.sleep(5)
+                    break
+                except Exception:
+                    if attempt < max_attempts - 1:
+                        time.sleep(2)
+                    else:
+                        logger.warning(
+                            "IAM role propagation check timed out, proceeding anyway"
+                        )
+
             logger.info(f"IAM service role created: {role_arn}")
             return role_arn
 
@@ -234,13 +255,13 @@ class FlinkManager:
             app_properties: Application properties dict (passed to FlinkApplicationProperties)
         """
         try:
-            # Ensure service role exists
             service_role_arn = self.ensure_service_role()
             if not service_role_arn:
                 logger.error("Failed to create or get service role")
                 return None
 
-            # Build property groups
+            log_stream_arn = self._ensure_cloudwatch_log_group(app_name)
+
             property_groups = [
                 {
                     "PropertyGroupId": "kinesis.analytics.flink.run.options",
@@ -251,7 +272,6 @@ class FlinkManager:
                 }
             ]
 
-            # Add application properties if provided
             if app_properties:
                 property_groups.append(
                     {
@@ -260,38 +280,64 @@ class FlinkManager:
                     }
                 )
 
+            app_config = {
+                "ApplicationCodeConfiguration": {
+                    "CodeContent": {
+                        "S3ContentLocation": {
+                            "BucketARN": s3_bucket_arn,
+                            "FileKey": s3_object_key,
+                        }
+                    },
+                    "CodeContentType": "ZIPFILE",
+                },
+                "EnvironmentProperties": {"PropertyGroups": property_groups},
+                "VpcConfigurations": [
+                    {"SubnetIds": [subnet_id], "SecurityGroupIds": [sg_id]},
+                ],
+                "FlinkApplicationConfiguration": {
+                    "CheckpointConfiguration": {"ConfigurationType": "DEFAULT"},
+                    "MonitoringConfiguration": {"ConfigurationType": "DEFAULT"},
+                    "ParallelismConfiguration": {"ConfigurationType": "DEFAULT"},
+                },
+                "ApplicationSnapshotConfiguration": {"SnapshotsEnabled": False},
+            }
+
             response = self.client.create_application(
                 ApplicationName=app_name,
                 ApplicationDescription="pyflink-sql",
                 RuntimeEnvironment="FLINK-1_20",
                 ServiceExecutionRole=service_role_arn,
-                ApplicationConfiguration={
-                    "ApplicationCodeConfiguration": {
-                        "CodeContent": {
-                            "S3ContentLocation": {
-                                "BucketARN": s3_bucket_arn,
-                                "FileKey": s3_object_key,
-                            }
-                        },
-                        "CodeContentType": "ZIPFILE",
-                    },
-                    "EnvironmentProperties": {"PropertyGroups": property_groups},
-                    "VpcConfigurations": [
-                        {"SubnetIds": [subnet_id], "SecurityGroupIds": [sg_id]},
-                    ],
-                    "FlinkApplicationConfiguration": {
-                        "CheckpointConfiguration": {"ConfigurationType": "DEFAULT"},
-                        "MonitoringConfiguration": {"ConfigurationType": "DEFAULT"},
-                        "ParallelismConfiguration": {"ConfigurationType": "DEFAULT"},
-                    },
-                    "ApplicationSnapshotConfiguration": {"SnapshotsEnabled": False},
-                },
+                ApplicationConfiguration=app_config,
+                CloudWatchLoggingOptions=[{"LogStreamARN": log_stream_arn}],
             )
             logger.info(f"Application {app_name} created successfully")
             return response
         except ClientError as e:
             logger.error(f"Error creating application: {e}")
             return None
+
+    def _ensure_cloudwatch_log_group(self, app_name: str) -> str:
+        """Create CloudWatch Log Group and Stream, return Log Stream ARN"""
+        log_group_name = f"/aws/kinesis-analytics/{app_name}"
+        log_stream_name = "kinesis-analytics-log-stream"
+
+        try:
+            self.logs_client.create_log_group(logGroupName=log_group_name)
+            logger.info(f"Created CloudWatch Log Group: {log_group_name}")
+        except self.logs_client.exceptions.ResourceAlreadyExistsException:
+            pass
+
+        try:
+            self.logs_client.create_log_stream(
+                logGroupName=log_group_name, logStreamName=log_stream_name
+            )
+            logger.info(f"Created CloudWatch Log Stream: {log_stream_name}")
+        except self.logs_client.exceptions.ResourceAlreadyExistsException:
+            pass
+
+        sts = boto3.client("sts")
+        account_id = sts.get_caller_identity()["Account"]
+        return f"arn:aws:logs:{self.region}:{account_id}:log-group:{log_group_name}:log-stream:{log_stream_name}"
 
     def start_application(self, app_name):
         try:
