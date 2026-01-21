@@ -96,6 +96,8 @@ class FlinkManager:
                 PolicyDocument=json.dumps(policy_doc),
             )
             logger.info(f"Added S3 permission for bucket '{bucket}'")
+            logger.info("Waiting for IAM policy to propagate (10s)...")
+            time.sleep(10)
 
         except Exception as e:
             logger.warning(f"Failed to update S3 permission: {e}")
