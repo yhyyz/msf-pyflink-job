@@ -72,6 +72,22 @@ msf-pyflink-job/
 
 ### 依赖编译
 
+#### 环境安装 (Amazon Linux 2023 / EC2)
+
+```bash
+# Java 11 (Amazon Corretto)
+sudo yum install -y java-11-amazon-corretto-devel
+
+# Maven 3.9.9
+cd /tmp && curl -sL https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz | sudo tar -xz -C /opt && sudo ln -sf /opt/apache-maven-3.9.9/bin/mvn /usr/local/bin/mvn
+
+# 验证
+java -version
+mvn -version
+```
+
+#### 编译打包
+
 ```bash
 # 环境要求: JDK 11, Maven 3.9.x
 git clone https://github.com/yhyyz/msf-pyflink-job.git
