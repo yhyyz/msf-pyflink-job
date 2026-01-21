@@ -183,6 +183,10 @@ IAM Role 由 `quick_start.py` → `flink_manager.py` 自动创建，包含：
 ### 快速开始
 
 ```bash
+# 0. 安装 Python 依赖
+uv sync
+source .venv/bin/activate
+
 # 1. 编译
 mvn clean package
 
