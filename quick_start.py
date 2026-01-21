@@ -103,6 +103,8 @@ def validate_args(args) -> None:
             errors.append("--msk_cluster_name is required (eg. msk-log-stream)")
         if not args.kafka_topic:
             errors.append("--kafka_topic is required (eg. test)")
+        if not args.s3_bucket:
+            errors.append("--s3_bucket is required (eg. your-bucket-name)")
 
         # Job-specific required args
         required_args = JOB_REQUIRED_ARGS.get(args.python_main, [])
@@ -338,8 +340,8 @@ def main():
     )
     parser.add_argument(
         "--s3_bucket",
-        default="pcd-ue1-01",
-        help="S3 bucket for code",
+        default="",
+        help="S3 bucket for code (eg. your-bucket-name)",
     )
     parser.add_argument(
         "--s3_key",

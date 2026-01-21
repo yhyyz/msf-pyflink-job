@@ -327,7 +327,7 @@ python quick_start.py \
 |------|------|--------|------|
 | **基础配置** | | | |
 | `--app_name` | 否 | `flink-msk-iceberg-sink-demo` | MSF 应用名称 |
-| `--s3_bucket` | 否 | `pcd-ue1-01` | S3 存储桶 |
+| `--s3_bucket` | ✅ 是 | - | S3 存储桶 (eg. your-bucket-name) |
 | `--s3_key` | 否 | `flink-jobs/flink-msk-iceberg-sink-demo.zip` | S3 对象路径 |
 | `--msk_cluster_name` | ✅ 是 | - | MSK 集群名称 (eg. msk-log-stream) |
 | `--aws_region` | ✅ 是 | - | AWS 区域 (eg. us-east-1) |
