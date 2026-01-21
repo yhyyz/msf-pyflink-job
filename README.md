@@ -6,7 +6,7 @@
 * Doris 3.1.3 (Flink Doris Connector 25.1.0)
 * Java 11 (Amazon Corretto)
 * Maven 3.9+
-* Python 3.11+
+* Python 3.11.x (PyFlink 1.20 不支持 3.12+)
 
 ### 项目结构
 
