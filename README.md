@@ -305,42 +305,42 @@ python quick_start.py \
 
 如果同时提供了 `--subnet_id`、`--sg_id`、`--kafka_bootstrap`，则优先使用手动提供的值。
 
-#### quick_start.py 参数默认值
+#### quick_start.py 参数说明
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| **基础配置** | | |
-| `--app_name` | `flink-msk-iceberg-sink-demo` | MSF 应用名称 |
-| `--s3_bucket` | `pcd-ue1-01` | S3 存储桶 |
-| `--s3_key` | `flink-jobs/flink-msk-iceberg-sink-demo.zip` | S3 对象路径 |
-| `--msk_cluster_name` | `msk-log-stream` | MSK 集群名称 |
-| `--aws_region` | `us-east-1` | AWS 区域 |
-| `--local_dep_jar_path` | `target/msf-pyflink-iceberg-1.0.0.zip` | 本地 zip 包路径 |
-| `--python_main` | `main-kafka-iceberg.py` | Python 入口文件 |
-| **Kafka** | | |
-| `--kafka_bootstrap` | `""` | 从 MSK 自动获取 |
-| `--kafka_topic` | `test` | Kafka topic |
-| **Iceberg** | | |
-| `--iceberg_warehouse` | `s3://pcd-ue1-01/iceberg-warehouse/` | Iceberg warehouse 路径 |
-| `--iceberg_database` | `test_iceberg_db` | Iceberg 数据库名 |
-| `--iceberg_table` | `kafka_agg_sink` | Iceberg 表名 |
-| **S3 Sink** | | |
-| `--s3_output_path` | `s3://pcd-ue1-01/flink-output/` | S3 输出路径 |
-| **MySQL** | | |
-| `--mysql_host` | `common-test.cpwuo9y53vjh.us-east-1.rds.amazonaws.com` | MySQL 主机 |
-| `--mysql_port` | `3306` | MySQL 端口 |
-| `--mysql_database` | `test_db` | MySQL 数据库 |
-| `--mysql_table` | `kafka_sink_data` | MySQL 表名 |
-| `--mysql_user` | `admin` | MySQL 用户名 |
-| `--mysql_password` | `""` | MySQL 密码 |
-| **Doris** | | |
-| `--doris_fenodes` | `10.0.0.10:8030` | Doris FE HTTP 地址 |
-| `--doris_database` | `test_db` | Doris 数据库 |
-| `--doris_table` | `cdc_sync_doris` | Doris 表名 |
-| `--doris_user` | `root` | Doris 用户名 |
-| `--doris_password` | `""` | Doris 密码 |
-| **Flink** | | |
-| `--disable_operator_chaining` | `false` | 禁用 operator chaining |
+| 参数 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| **基础配置** | | | |
+| `--app_name` | 否 | `flink-msk-iceberg-sink-demo` | MSF 应用名称 |
+| `--s3_bucket` | 否 | `pcd-ue1-01` | S3 存储桶 |
+| `--s3_key` | 否 | `flink-jobs/flink-msk-iceberg-sink-demo.zip` | S3 对象路径 |
+| `--msk_cluster_name` | ✅ 是 | - | MSK 集群名称 (eg. msk-log-stream) |
+| `--aws_region` | ✅ 是 | - | AWS 区域 (eg. us-east-1) |
+| `--local_dep_jar_path` | 否 | `target/msf-pyflink-iceberg-1.0.0.zip` | 本地 zip 包路径 |
+| `--python_main` | 否 | `main-kafka-iceberg.py` | Python 入口文件 |
+| **Kafka** | | | |
+| `--kafka_bootstrap` | 否 | - | 从 MSK 自动获取 |
+| `--kafka_topic` | ✅ 是 | - | Kafka topic (eg. test) |
+| **Iceberg** | | | |
+| `--iceberg_warehouse` | ✅ Iceberg 作业 | - | Iceberg warehouse 路径 (eg. s3://your-bucket/iceberg-warehouse/) |
+| `--iceberg_database` | 否 | `test_iceberg_db` | Iceberg 数据库名 |
+| `--iceberg_table` | 否 | `kafka_agg_sink` | Iceberg 表名 |
+| **S3 Sink** | | | |
+| `--s3_output_path` | ✅ S3 作业 | - | S3 输出路径 (eg. s3://your-bucket/flink-output/) |
+| **MySQL** | | | |
+| `--mysql_host` | ✅ MySQL 作业 | - | MySQL 主机 (eg. your-mysql.rds.amazonaws.com) |
+| `--mysql_port` | 否 | `3306` | MySQL 端口 |
+| `--mysql_database` | 否 | `test_db` | MySQL 数据库 |
+| `--mysql_table` | 否 | `kafka_sink_data` | MySQL 表名 |
+| `--mysql_user` | ✅ MySQL 作业 | - | MySQL 用户名 (eg. admin) |
+| `--mysql_password` | 否 | `""` | MySQL 密码（允许空） |
+| **Doris** | | | |
+| `--doris_fenodes` | ✅ Doris 作业 | - | Doris FE HTTP 地址 (eg. 10.0.0.10:8030) |
+| `--doris_database` | 否 | `test_db` | Doris 数据库 |
+| `--doris_table` | 否 | `cdc_sync_doris` | Doris 表名 |
+| `--doris_user` | 否 | `root` | Doris 用户名 |
+| `--doris_password` | 否 | `""` | Doris 密码 |
+| **Flink** | | | |
+| `--disable_operator_chaining` | 否 | `false` | 禁用 operator chaining |
 
 ### 本地调试
 

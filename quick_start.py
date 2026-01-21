@@ -75,6 +75,59 @@ JOB_PROPERTY_KEYS: dict[str, list[str]] = {
     "main-simple.py": [],
 }
 
+# Required arguments by job type
+JOB_REQUIRED_ARGS: dict[str, list[str]] = {
+    "main-kafka-iceberg.py": ["iceberg_warehouse"],
+    "main-debezium-iceberg.py": ["iceberg_warehouse"],
+    "main-kafka-s3.py": ["s3_output_path"],
+    "main-debezium-doris.py": ["doris_fenodes"],
+    "main-mysql.py": ["mysql_host", "mysql_user"],
+    "main-debezium-mysql.py": ["mysql_host", "mysql_user"],
+    "main-simple.py": [],
+}
+
+
+def validate_args(args) -> None:
+    """Validate required arguments based on operation mode and job type"""
+    errors = []
+
+    if args.delete:
+        # Delete mode only requires aws_region
+        if not args.aws_region:
+            errors.append("--aws_region is required (eg. us-east-1)")
+    else:
+        # Deploy mode - common required args
+        if not args.aws_region:
+            errors.append("--aws_region is required (eg. us-east-1)")
+        if not args.msk_cluster_name:
+            errors.append("--msk_cluster_name is required (eg. msk-log-stream)")
+        if not args.kafka_topic:
+            errors.append("--kafka_topic is required (eg. test)")
+
+        # Job-specific required args
+        required_args = JOB_REQUIRED_ARGS.get(args.python_main, [])
+
+        if "iceberg_warehouse" in required_args and not args.iceberg_warehouse:
+            errors.append(
+                "--iceberg_warehouse is required (eg. s3://your-bucket/iceberg-warehouse/)"
+            )
+        if "s3_output_path" in required_args and not args.s3_output_path:
+            errors.append(
+                "--s3_output_path is required (eg. s3://your-bucket/flink-output/)"
+            )
+        if "doris_fenodes" in required_args and not args.doris_fenodes:
+            errors.append("--doris_fenodes is required (eg. 10.0.0.10:8030)")
+        if "mysql_host" in required_args and not args.mysql_host:
+            errors.append("--mysql_host is required (eg. your-mysql.rds.amazonaws.com)")
+        if "mysql_user" in required_args and not args.mysql_user:
+            errors.append("--mysql_user is required (eg. admin)")
+        # mysql_password allows empty string, no validation
+
+    if errors:
+        for e in errors:
+            logger.error(e)
+        sys.exit(1)
+
 
 def get_msk_cluster_info(cluster_name: str, region: str) -> dict[str, str] | None:
     """Get MSK cluster info: bootstrap servers, subnet, security group"""
@@ -305,13 +358,13 @@ def main():
     )
     parser.add_argument(
         "--msk_cluster_name",
-        default="msk-log-stream",
-        help="MSK cluster name (used to auto-detect subnet, sg, bootstrap)",
+        default="",
+        help="MSK cluster name for auto-detect subnet/sg/bootstrap (eg. msk-log-stream)",
     )
     parser.add_argument(
         "--aws_region",
-        default="us-east-1",
-        help="AWS region",
+        default="",
+        help="AWS region (eg. us-east-1)",
     )
     parser.add_argument(
         "--local_dep_jar_path",
@@ -332,59 +385,59 @@ def main():
     )
     kafka_group.add_argument(
         "--kafka_topic",
-        default="test",
-        help="Kafka topic",
+        default="",
+        help="Kafka topic (eg. test)",
     )
 
     iceberg_group = parser.add_argument_group("Iceberg")
     iceberg_group.add_argument(
         "--iceberg_warehouse",
-        default="s3://pcd-ue1-01/iceberg-warehouse/",
-        help="Iceberg warehouse path",
+        default="",
+        help="Iceberg warehouse path (eg. s3://your-bucket/iceberg-warehouse/)",
     )
     iceberg_group.add_argument(
         "--iceberg_database",
         default="test_iceberg_db",
-        help="Iceberg database name",
+        help="Iceberg database name (eg. test_iceberg_db)",
     )
     iceberg_group.add_argument(
         "--iceberg_table",
         default="kafka_agg_sink",
-        help="Iceberg table name",
+        help="Iceberg table name (eg. kafka_agg_sink)",
     )
 
     s3_group = parser.add_argument_group("S3 Sink")
     s3_group.add_argument(
         "--s3_output_path",
-        default="s3://pcd-ue1-01/flink-output/",
-        help="S3 output path for kafka-s3 job",
+        default="",
+        help="S3 output path (eg. s3://your-bucket/flink-output/)",
     )
 
     mysql_group = parser.add_argument_group("MySQL")
     mysql_group.add_argument(
         "--mysql_host",
-        default="common-test.cpwuo9y53vjh.us-east-1.rds.amazonaws.com",
-        help="MySQL host",
+        default="",
+        help="MySQL host (eg. your-mysql.rds.amazonaws.com)",
     )
     mysql_group.add_argument(
         "--mysql_port",
         default="3306",
-        help="MySQL port",
+        help="MySQL port (eg. 3306)",
     )
     mysql_group.add_argument(
         "--mysql_database",
         default="test_db",
-        help="MySQL database",
+        help="MySQL database (eg. test_db)",
     )
     mysql_group.add_argument(
         "--mysql_table",
         default="kafka_sink_data",
-        help="MySQL table",
+        help="MySQL table (eg. kafka_sink_data)",
     )
     mysql_group.add_argument(
         "--mysql_user",
-        default="admin",
-        help="MySQL username",
+        default="",
+        help="MySQL username (eg. admin)",
     )
     mysql_group.add_argument(
         "--mysql_password",
@@ -395,23 +448,23 @@ def main():
     doris_group = parser.add_argument_group("Doris")
     doris_group.add_argument(
         "--doris_fenodes",
-        default="10.0.0.10:8030",
-        help="Doris FE HTTP address (host:http_port)",
+        default="",
+        help="Doris FE HTTP address (eg. 10.0.0.10:8030)",
     )
     doris_group.add_argument(
         "--doris_database",
         default="test_db",
-        help="Doris database",
+        help="Doris database (eg. test_db)",
     )
     doris_group.add_argument(
         "--doris_table",
         default="cdc_sync_doris",
-        help="Doris table",
+        help="Doris table (eg. cdc_sync_doris)",
     )
     doris_group.add_argument(
         "--doris_user",
         default="root",
-        help="Doris username",
+        help="Doris username (eg. root)",
     )
     doris_group.add_argument(
         "--doris_password",
@@ -427,6 +480,7 @@ def main():
     )
 
     args = parser.parse_args()
+    validate_args(args)
 
     if args.delete:
         delete_application(args)
