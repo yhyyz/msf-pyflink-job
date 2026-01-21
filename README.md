@@ -245,6 +245,13 @@ python quick_start.py --help
 
 # 删除应用
 python quick_start.py --app_name flink-cdc-doris --delete
+
+# 禁用 operator chaining (MSF 部署)
+python quick_start.py \
+  --app_name flink-cdc-doris \
+  --python_main main-debezium-doris.py \
+  --local_dep_jar_path target/msf-pyflink-doris-1.0.0.zip \
+  --disable_operator_chaining
 ```
 
 `--msk_cluster_name` 会自动获取：
