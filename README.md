@@ -151,6 +151,11 @@ mvn clean package -P doris
 | `doris.user` | `root` | Doris 用户名 |
 | `doris.password` | `` | Doris 密码 |
 
+**Flink 配置** (所有作业通用)：
+| Key | Value | 说明 |
+|-----|-------|------|
+| `flink.operator-chaining.enabled` | `true` / `false` | 是否启用 operator chaining (默认 true) |
+
 ### 前置条件设置
 
 使用 `setup_database.py` 创建 Glue Database（IAM Role 由 `quick_start.py` 自动创建）：
@@ -237,6 +242,9 @@ python quick_start.py \
 
 # 查看所有参数
 python quick_start.py --help
+
+# 删除应用
+python quick_start.py --app_name flink-cdc-doris --delete
 ```
 
 `--msk_cluster_name` 会自动获取：
@@ -324,6 +332,9 @@ python src/main-debezium-doris.py \
   --doris-database test_db \
   --doris-table cdc_sync_doris \
   --doris-user root
+
+# 禁用 operator chaining (所有作业通用)
+python src/main-kafka-iceberg.py --disable-operator-chaining
 ```
 
 #### Flink Web UI

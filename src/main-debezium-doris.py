@@ -8,6 +8,7 @@ import os
 import sys
 from dataclasses import dataclass
 
+from pyflink.common import Configuration
 from pyflink.table import EnvironmentSettings, TableEnvironment
 
 logging.basicConfig(
@@ -30,6 +31,7 @@ class JobConfig:
     doris_table: str
     doris_user: str
     doris_password: str
+    operator_chaining_enabled: bool = True
 
 
 def is_running_on_msf() -> bool:
@@ -55,6 +57,10 @@ def load_config_from_msf() -> JobConfig:
         doris_table=props.get("doris.table", "cdc_sync_doris"),
         doris_user=props.get("doris.user", "root"),
         doris_password=props.get("doris.password", ""),
+        operator_chaining_enabled=props.get(
+            "flink.operator-chaining.enabled", "true"
+        ).lower()
+        == "true",
     )
 
 
@@ -80,6 +86,11 @@ def load_config_from_args() -> JobConfig:
     parser.add_argument("--doris-table", default="cdc_sync_doris", help="Doris table")
     parser.add_argument("--doris-user", default="root", help="Doris username")
     parser.add_argument("--doris-password", default="", help="Doris password")
+    parser.add_argument(
+        "--disable-operator-chaining",
+        action="store_true",
+        help="Disable operator chaining",
+    )
 
     args = parser.parse_args()
     return JobConfig(
@@ -90,15 +101,25 @@ def load_config_from_args() -> JobConfig:
         doris_table=args.doris_table,
         doris_user=args.doris_user,
         doris_password=args.doris_password,
+        operator_chaining_enabled=not args.disable_operator_chaining,
     )
 
 
-def create_table_environment() -> TableEnvironment:
-    env_settings = EnvironmentSettings.new_instance().in_streaming_mode().build()
+def create_table_environment(config: JobConfig) -> TableEnvironment:
+    flink_config = Configuration()
+    flink_config.set_string("execution.checkpointing.interval", "60s")
+
+    if not config.operator_chaining_enabled:
+        flink_config.set_boolean("pipeline.operator-chaining.enabled", False)
+        logger.info("Operator chaining disabled")
+
+    env_settings = (
+        EnvironmentSettings.new_instance()
+        .in_streaming_mode()
+        .with_configuration(flink_config)
+        .build()
+    )
     table_env = TableEnvironment.create(env_settings)
-    table_env.get_config().get_configuration().set_string(
-        "execution.checkpointing.interval", "60s"
-    )
 
     if not is_running_on_msf():
         table_env.get_config().get_configuration().set_string("rest.port", "8081")
@@ -125,7 +146,7 @@ def run_job(config: JobConfig):
         f"Doris: {config.doris_fenodes} / {config.doris_database}.{config.doris_table}"
     )
 
-    table_env = create_table_environment()
+    table_env = create_table_environment(config)
 
     # Debezium CDC source from Kafka
     create_source_sql = f"""

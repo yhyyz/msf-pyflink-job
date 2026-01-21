@@ -8,6 +8,7 @@ import os
 import sys
 from dataclasses import dataclass
 
+from pyflink.common import Configuration
 from pyflink.table import EnvironmentSettings, TableEnvironment
 
 logging.basicConfig(
@@ -31,6 +32,7 @@ class JobConfig:
     mysql_table: str
     mysql_user: str
     mysql_password: str
+    operator_chaining_enabled: bool = True
 
 
 def is_running_on_msf() -> bool:
@@ -57,6 +59,10 @@ def load_config_from_msf() -> JobConfig:
         mysql_table=props["mysql.table"],
         mysql_user=props["mysql.user"],
         mysql_password=props["mysql.password"],
+        operator_chaining_enabled=props.get(
+            "flink.operator-chaining.enabled", "true"
+        ).lower()
+        == "true",
     )
 
 
@@ -81,6 +87,11 @@ def load_config_from_args() -> JobConfig:
     parser.add_argument("--mysql-table", default="kafka_sink_data", help="MySQL table")
     parser.add_argument("--mysql-user", default="admin", help="MySQL user")
     parser.add_argument("--mysql-password", default="", help="MySQL password")
+    parser.add_argument(
+        "--disable-operator-chaining",
+        action="store_true",
+        help="Disable operator chaining",
+    )
 
     args = parser.parse_args()
     return JobConfig(
@@ -92,15 +103,25 @@ def load_config_from_args() -> JobConfig:
         mysql_table=args.mysql_table,
         mysql_user=args.mysql_user,
         mysql_password=args.mysql_password,
+        operator_chaining_enabled=not args.disable_operator_chaining,
     )
 
 
-def create_table_environment() -> TableEnvironment:
-    env_settings = EnvironmentSettings.new_instance().in_streaming_mode().build()
+def create_table_environment(config: JobConfig) -> TableEnvironment:
+    flink_config = Configuration()
+    flink_config.set_string("execution.checkpointing.interval", "60s")
+
+    if not config.operator_chaining_enabled:
+        flink_config.set_boolean("pipeline.operator-chaining.enabled", False)
+        logger.info("Operator chaining disabled")
+
+    env_settings = (
+        EnvironmentSettings.new_instance()
+        .in_streaming_mode()
+        .with_configuration(flink_config)
+        .build()
+    )
     table_env = TableEnvironment.create(env_settings)
-    table_env.get_config().get_configuration().set_string(
-        "execution.checkpointing.interval", "60s"
-    )
 
     if not is_running_on_msf():
         table_env.get_config().get_configuration().set_string("rest.port", "8081")
@@ -127,7 +148,7 @@ def run_job(config: JobConfig):
         f"MySQL: {config.mysql_host}:{config.mysql_port}/{config.mysql_database}.{config.mysql_table}"
     )
 
-    table_env = create_table_environment()
+    table_env = create_table_environment(config)
 
     create_source_sql = f"""
         CREATE TABLE kafka_source (

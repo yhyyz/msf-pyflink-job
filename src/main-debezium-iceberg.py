@@ -8,6 +8,7 @@ import os
 import sys
 from dataclasses import dataclass
 
+from pyflink.common import Configuration
 from pyflink.table import EnvironmentSettings, TableEnvironment
 
 logging.basicConfig(
@@ -29,6 +30,7 @@ class JobConfig:
     iceberg_database: str
     iceberg_table: str
     aws_region: str
+    operator_chaining_enabled: bool = True
 
 
 def is_running_on_msf() -> bool:
@@ -53,6 +55,10 @@ def load_config_from_msf() -> JobConfig:
         iceberg_database=props.get("iceberg.database", "default_db"),
         iceberg_table=props.get("iceberg.table", "cdc_sync_iceberg"),
         aws_region=props.get("aws.region", "us-east-1"),
+        operator_chaining_enabled=props.get(
+            "flink.operator-chaining.enabled", "true"
+        ).lower()
+        == "true",
     )
 
 
@@ -81,6 +87,11 @@ def load_config_from_args() -> JobConfig:
         "--iceberg-table", default="cdc_sync_iceberg", help="Iceberg table"
     )
     parser.add_argument("--aws-region", default="us-east-1", help="AWS region")
+    parser.add_argument(
+        "--disable-operator-chaining",
+        action="store_true",
+        help="Disable operator chaining",
+    )
 
     args = parser.parse_args()
     return JobConfig(
@@ -90,15 +101,25 @@ def load_config_from_args() -> JobConfig:
         iceberg_database=args.iceberg_database,
         iceberg_table=args.iceberg_table,
         aws_region=args.aws_region,
+        operator_chaining_enabled=not args.disable_operator_chaining,
     )
 
 
-def create_table_environment() -> TableEnvironment:
-    env_settings = EnvironmentSettings.new_instance().in_streaming_mode().build()
+def create_table_environment(config: JobConfig) -> TableEnvironment:
+    flink_config = Configuration()
+    flink_config.set_string("execution.checkpointing.interval", "60s")
+
+    if not config.operator_chaining_enabled:
+        flink_config.set_boolean("pipeline.operator-chaining.enabled", False)
+        logger.info("Operator chaining disabled")
+
+    env_settings = (
+        EnvironmentSettings.new_instance()
+        .in_streaming_mode()
+        .with_configuration(flink_config)
+        .build()
+    )
     table_env = TableEnvironment.create(env_settings)
-    table_env.get_config().get_configuration().set_string(
-        "execution.checkpointing.interval", "60s"
-    )
 
     if not is_running_on_msf():
         table_env.get_config().get_configuration().set_string("rest.port", "8081")
@@ -126,7 +147,7 @@ def run_job(config: JobConfig):
     )
     logger.info(f"Region: {config.aws_region}")
 
-    table_env = create_table_environment()
+    table_env = create_table_environment(config)
     iceberg_catalog = "iceberg_catalog"
 
     create_source_sql = f"""

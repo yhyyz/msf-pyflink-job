@@ -168,6 +168,28 @@ def build_app_properties(args) -> dict[str, str]:
     return {k: v for k, v in all_properties.items() if k in required_keys and v}
 
 
+def delete_application(args):
+    """Delete a Flink application"""
+    app_name = args.app_name
+    aws_region = args.aws_region
+
+    logger.info(f"Deleting Flink application: {app_name}")
+
+    manager = FlinkManager(region=aws_region)
+
+    try:
+        result = manager.delete_application(app_name)
+        if result:
+            logger.info(f"Application '{app_name}' deleted successfully")
+            return True
+        else:
+            logger.error(f"Failed to delete application '{app_name}'")
+            return False
+    except Exception as e:
+        logger.error(f"Delete failed: {e}")
+        return False
+
+
 def quick_start(args):
     app_name = args.app_name
     s3_bucket = args.s3_bucket
@@ -251,6 +273,11 @@ def main():
         "--app_name",
         default="flink-msk-iceberg-sink-demo",
         help="Application name",
+    )
+    parser.add_argument(
+        "--delete",
+        action="store_true",
+        help="Delete the application instead of creating it",
     )
     parser.add_argument(
         "--s3_bucket",
@@ -389,7 +416,11 @@ def main():
     )
 
     args = parser.parse_args()
-    quick_start(args)
+
+    if args.delete:
+        delete_application(args)
+    else:
+        quick_start(args)
 
 
 if __name__ == "__main__":
