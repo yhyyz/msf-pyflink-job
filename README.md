@@ -190,62 +190,98 @@ IAM Role 由 `quick_start.py` → `flink_manager.py` 自动创建，包含：
 uv sync
 source .venv/bin/activate
 
-# 1. 编译
-mvn clean package
+# 1. 编译 (根据需要选择 profile)
+mvn clean package -P iceberg    # Kafka → Iceberg, Debezium CDC → Iceberg
+mvn clean package -P mysql      # Kafka → MySQL, Debezium CDC → MySQL
+mvn clean package -P doris      # Debezium CDC → Doris
+mvn clean package -P kafka-s3   # Kafka → S3
 
-# 2. 创建 Glue Database (一次性)
+# 2. 创建 Glue Database (Iceberg 作业需要，一次性)
 python setup_database.py --region us-east-1 --s3-bucket your-bucket
 
-# 3. 部署 MSF 应用 (使用 MSK cluster name 自动获取网络配置)
+# 3. 部署 MSF 应用
+
+# Kafka → Iceberg
 python quick_start.py \
-  --app_name flink-msk-iceberg-demo \
+  --app_name flink-kafka-iceberg \
+  --python_main main-kafka-iceberg.py \
+  --local_dep_jar_path target/msf-pyflink-iceberg-1.0.0.zip \
+  --s3_key flink-jobs/flink-kafka-iceberg.zip \
   --msk_cluster_name msk-log-stream \
-  --kafka_topic your-topic \
+  --kafka_topic test \
   --iceberg_warehouse s3://your-bucket/iceberg-warehouse/ \
   --iceberg_database test_iceberg_db \
-  --iceberg_table kafka_agg_sink
+  --iceberg_table kafka_agg_sink \
+  --aws_region us-east-1
 
-# 或者手动指定网络配置
-python quick_start.py \
-  --app_name flink-msk-iceberg-demo \
-  --subnet_id subnet-xxx \
-  --sg_id sg-xxx \
-  --kafka_bootstrap your-kafka:9092 \
-  --kafka_topic your-topic \
-  ...
-
-# 4. 部署其他类型作业
 # Debezium CDC → Iceberg
 python quick_start.py \
   --app_name flink-cdc-iceberg \
   --python_main main-debezium-iceberg.py \
   --local_dep_jar_path target/msf-pyflink-debezium-1.0.0.zip \
+  --s3_key flink-jobs/flink-cdc-iceberg.zip \
+  --msk_cluster_name msk-log-stream \
   --kafka_topic cdc-topic \
-  ...
+  --iceberg_warehouse s3://your-bucket/iceberg-warehouse/ \
+  --iceberg_database test_iceberg_db \
+  --iceberg_table cdc_sync_iceberg \
+  --aws_region us-east-1
 
 # Kafka → MySQL
 python quick_start.py \
   --app_name flink-kafka-mysql \
   --python_main main-mysql.py \
   --local_dep_jar_path target/msf-pyflink-mysql-1.0.0.zip \
+  --s3_key flink-jobs/flink-kafka-mysql.zip \
+  --msk_cluster_name msk-log-stream \
+  --kafka_topic test \
   --mysql_host your-mysql.rds.amazonaws.com \
+  --mysql_port 3306 \
   --mysql_database test_db \
-  --mysql_table kafka_sink \
+  --mysql_table kafka_sink_data \
   --mysql_user admin \
-  --mysql_password xxx \
-  ...
+  --mysql_password your-password
+
+# Debezium CDC → MySQL
+python quick_start.py \
+  --app_name flink-cdc-mysql \
+  --python_main main-debezium-mysql.py \
+  --local_dep_jar_path target/msf-pyflink-mysql-1.0.0.zip \
+  --s3_key flink-jobs/flink-cdc-mysql.zip \
+  --msk_cluster_name msk-log-stream \
+  --kafka_topic cdc-topic \
+  --mysql_host your-mysql.rds.amazonaws.com \
+  --mysql_port 3306 \
+  --mysql_database test_db \
+  --mysql_table cdc_sync \
+  --mysql_user admin \
+  --mysql_password your-password
 
 # Debezium CDC → Doris
 python quick_start.py \
   --app_name flink-cdc-doris \
   --python_main main-debezium-doris.py \
   --local_dep_jar_path target/msf-pyflink-doris-1.0.0.zip \
+  --s3_key flink-jobs/flink-cdc-doris.zip \
+  --msk_cluster_name msk-log-stream \
   --kafka_topic cdc-topic \
   --doris_fenodes 10.0.0.10:8030 \
   --doris_database test_db \
   --doris_table cdc_sync_doris \
   --doris_user root \
-  ...
+  --doris_password ""
+
+# Kafka → S3
+python quick_start.py \
+  --app_name flink-kafka-s3 \
+  --python_main main-kafka-s3.py \
+  --local_dep_jar_path target/msf-pyflink-kafka-s3-1.0.0.zip \
+  --s3_key flink-jobs/flink-kafka-s3.zip \
+  --msk_cluster_name msk-log-stream \
+  --kafka_topic test \
+  --s3_output_path s3://your-bucket/flink-output/
+
+# 4. 其他操作
 
 # 查看所有参数
 python quick_start.py --help
@@ -253,11 +289,12 @@ python quick_start.py --help
 # 删除应用
 python quick_start.py --app_name flink-cdc-doris --delete
 
-# 禁用 operator chaining (MSF 部署)
+# 禁用 operator chaining
 python quick_start.py \
   --app_name flink-cdc-doris \
   --python_main main-debezium-doris.py \
   --local_dep_jar_path target/msf-pyflink-doris-1.0.0.zip \
+  --s3_key flink-jobs/flink-cdc-doris.zip \
   --disable_operator_chaining
 ```
 
@@ -267,6 +304,43 @@ python quick_start.py \
 - 安全组 ID
 
 如果同时提供了 `--subnet_id`、`--sg_id`、`--kafka_bootstrap`，则优先使用手动提供的值。
+
+#### quick_start.py 参数默认值
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| **基础配置** | | |
+| `--app_name` | `flink-msk-iceberg-sink-demo` | MSF 应用名称 |
+| `--s3_bucket` | `pcd-ue1-01` | S3 存储桶 |
+| `--s3_key` | `flink-jobs/flink-msk-iceberg-sink-demo.zip` | S3 对象路径 |
+| `--msk_cluster_name` | `msk-log-stream` | MSK 集群名称 |
+| `--aws_region` | `us-east-1` | AWS 区域 |
+| `--local_dep_jar_path` | `target/msf-pyflink-iceberg-1.0.0.zip` | 本地 zip 包路径 |
+| `--python_main` | `main-kafka-iceberg.py` | Python 入口文件 |
+| **Kafka** | | |
+| `--kafka_bootstrap` | `""` | 从 MSK 自动获取 |
+| `--kafka_topic` | `test` | Kafka topic |
+| **Iceberg** | | |
+| `--iceberg_warehouse` | `s3://pcd-ue1-01/iceberg-warehouse/` | Iceberg warehouse 路径 |
+| `--iceberg_database` | `test_iceberg_db` | Iceberg 数据库名 |
+| `--iceberg_table` | `kafka_agg_sink` | Iceberg 表名 |
+| **S3 Sink** | | |
+| `--s3_output_path` | `s3://pcd-ue1-01/flink-output/` | S3 输出路径 |
+| **MySQL** | | |
+| `--mysql_host` | `common-test.cpwuo9y53vjh.us-east-1.rds.amazonaws.com` | MySQL 主机 |
+| `--mysql_port` | `3306` | MySQL 端口 |
+| `--mysql_database` | `test_db` | MySQL 数据库 |
+| `--mysql_table` | `kafka_sink_data` | MySQL 表名 |
+| `--mysql_user` | `admin` | MySQL 用户名 |
+| `--mysql_password` | `""` | MySQL 密码 |
+| **Doris** | | |
+| `--doris_fenodes` | `10.0.0.10:8030` | Doris FE HTTP 地址 |
+| `--doris_database` | `test_db` | Doris 数据库 |
+| `--doris_table` | `cdc_sync_doris` | Doris 表名 |
+| `--doris_user` | `root` | Doris 用户名 |
+| `--doris_password` | `""` | Doris 密码 |
+| **Flink** | | |
+| `--disable_operator_chaining` | `false` | 禁用 operator chaining |
 
 ### 本地调试
 
@@ -292,49 +366,48 @@ mvn clean package -P iceberg    # 或 mysql, debezium, doris
 #### 运行示例
 
 ```bash
-# Kafka → Iceberg (查看帮助)
+# 查看帮助
 python src/main-kafka-iceberg.py --help
 
-# 使用默认参数运行
-python src/main-kafka-iceberg.py
-
-# 自定义参数
+# Kafka → Iceberg
 python src/main-kafka-iceberg.py \
   --kafka-bootstrap your-kafka:9092 \
-  --kafka-topic your-topic \
-  --iceberg-warehouse s3://your-bucket/warehouse/ \
+  --kafka-topic test \
+  --iceberg-warehouse s3://your-bucket/iceberg-warehouse/ \
   --iceberg-database test_iceberg_db \
-  --iceberg-table my_table \
+  --iceberg-table kafka_agg_sink \
   --aws-region us-east-1
-
-# Kafka → MySQL
-python src/main-mysql.py \
-  --kafka-bootstrap your-kafka:9092 \
-  --kafka-topic your-topic \
-  --mysql-host your-mysql.rds.amazonaws.com \
-  --mysql-database test_db \
-  --mysql-table kafka_sink \
-  --mysql-user admin \
-  --mysql-password xxx
 
 # Debezium CDC → Iceberg
 python src/main-debezium-iceberg.py \
   --kafka-bootstrap your-kafka:9092 \
   --kafka-topic cdc-topic \
-  --iceberg-warehouse s3://your-bucket/warehouse/ \
+  --iceberg-warehouse s3://your-bucket/iceberg-warehouse/ \
   --iceberg-database test_iceberg_db \
-  --iceberg-table cdc_sync \
+  --iceberg-table cdc_sync_iceberg \
   --aws-region us-east-1
+
+# Kafka → MySQL
+python src/main-mysql.py \
+  --kafka-bootstrap your-kafka:9092 \
+  --kafka-topic test \
+  --mysql-host your-mysql.rds.amazonaws.com \
+  --mysql-port 3306 \
+  --mysql-database test_db \
+  --mysql-table kafka_sink_data \
+  --mysql-user admin \
+  --mysql-password your-password
 
 # Debezium CDC → MySQL
 python src/main-debezium-mysql.py \
   --kafka-bootstrap your-kafka:9092 \
   --kafka-topic cdc-topic \
   --mysql-host your-mysql.rds.amazonaws.com \
+  --mysql-port 3306 \
   --mysql-database test_db \
   --mysql-table cdc_sync \
   --mysql-user admin \
-  --mysql-password xxx
+  --mysql-password your-password
 
 # Debezium CDC → Doris
 python src/main-debezium-doris.py \
@@ -343,7 +416,15 @@ python src/main-debezium-doris.py \
   --doris-fenodes 10.0.0.10:8030 \
   --doris-database test_db \
   --doris-table cdc_sync_doris \
-  --doris-user root
+  --doris-user root \
+  --doris-password ""
+
+# Kafka → S3
+python src/main-kafka-s3.py \
+  --kafka-bootstrap your-kafka:9092 \
+  --kafka-topic test \
+  --s3-output-path s3://your-bucket/flink-output/ \
+  --aws-region us-east-1
 
 # 禁用 operator chaining (所有作业通用)
 python src/main-kafka-iceberg.py --disable-operator-chaining
