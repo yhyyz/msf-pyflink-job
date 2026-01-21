@@ -4,6 +4,9 @@
 * MSF Flink 1.20
 * Iceberg 1.9.0
 * Doris 3.1.3 (Flink Doris Connector 25.1.0)
+* Java 11 (Amazon Corretto)
+* Maven 3.9+
+* Python 3.11+
 
 ### 项目结构
 
