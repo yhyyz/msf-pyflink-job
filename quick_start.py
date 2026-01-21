@@ -70,6 +70,7 @@ JOB_PROPERTY_KEYS: dict[str, list[str]] = {
         "doris.table",
         "doris.user",
         "doris.password",
+        "flink.operator-chaining.enabled",
     ],
     "main-simple.py": [],
 }
@@ -162,6 +163,9 @@ def build_app_properties(args) -> dict[str, str]:
         "doris.user": args.doris_user,
         "doris.password": args.doris_password,
         "aws.region": args.aws_region,
+        "flink.operator-chaining.enabled": "false"
+        if args.disable_operator_chaining
+        else "true",
     }
 
     required_keys = JOB_PROPERTY_KEYS.get(args.python_main, list(all_properties.keys()))
@@ -413,6 +417,13 @@ def main():
         "--doris_password",
         default="",
         help="Doris password",
+    )
+
+    flink_group = parser.add_argument_group("Flink")
+    flink_group.add_argument(
+        "--disable_operator_chaining",
+        action="store_true",
+        help="Disable operator chaining",
     )
 
     args = parser.parse_args()
