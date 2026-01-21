@@ -268,18 +268,16 @@ python quick_start.py \
 - **MSF 运行**：从 `/etc/flink/application_properties.json` 读取配置
 
 ```bash
-# 创建虚拟环境
+# 安装依赖 (使用 uv，推荐)
+uv sync
+
+# 或者手动创建虚拟环境
 uv venv -p 3.11
 source .venv/bin/activate
-
-# 安装依赖
-uv pip install boto3 apache-flink==1.20.0 setuptools
+uv pip install -e .
 
 # 编译 (根据需要选择 profile)
 mvn clean package -P iceberg    # 或 mysql, debezium, doris
-
-# 后续运行时激活环境
-source .venv/bin/activate
 ```
 
 > **注意**: 本项目使用 `.venv` 目录下的虚拟环境，运行任何 Python 脚本前需先执行 `source .venv/bin/activate`
